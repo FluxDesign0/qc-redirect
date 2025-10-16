@@ -34,7 +34,6 @@
   </div>
 
   <form id="form" class="hidden">
-    <!-- su mobile apre direttamente la fotocamera -->
     <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
     <p><button type="submit">Carica</button></p>
   </form>
@@ -42,9 +41,8 @@
 
 <script>
   // ====== CONFIG ======
-  // URL della tua Web App (quella che funziona ora)
-  const BACKEND_URL =
-    "https://script.google.com/a/gmail.com/macros/s/AKfycbzI--rotLUR_6FcU8MsmERwjuUPUSOILoHzpdOSehxPB_RM-DPZxxS4gP_W2zzLhez_/exec";
+  // Passaggio attraverso il Worker Cloudflare
+  const BACKEND_URL = "https://qc-proxy.design-fluxitalia.workers.dev";
   // =====================
 
   const qs = new URLSearchParams(location.search);
