@@ -1,4 +1,3 @@
-<!-- cache fix -->
 <!doctype html>
 <html lang="it">
 <head>
@@ -8,19 +7,15 @@
   <style>
     :root { color-scheme: light dark; }
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:16px}
-    .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
-    @media (prefers-color-scheme: dark){
-      .card{border-color:#374151;background:#111827}
-      .muted{color:#9ca3af}
-    }
+    .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #2d3748;border-radius:12px}
     h1{margin:0 0 12px;font-size:18px}
-    .muted{color:#6b7280;font-size:13px}
-    img{max-width:100%;height:auto;border:1px solid #e5e7eb;border-radius:8px}
+    .muted{opacity:.7;font-size:13px}
+    img{max-width:100%;height:auto;border:1px solid #2d3748;border-radius:8px}
     button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff}
     input[type=file]{display:block;margin:12px 0}
     .hidden{display:none}
-    .error{color:#dc2626}
-    .ok{color:#16a34a}
+    code{padding:2px 6px;border-radius:6px;background:rgba(125,125,125,.15)}
+    .err{color:#ff6b6b}
   </style>
 </head>
 <body>
@@ -31,7 +26,7 @@
   <div id="viewWrap" class="hidden">
     <p class="muted">Foto per <code id="cid"></code>:</p>
     <img id="photo" alt="QC photo">
-    <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
+    <p><button id="changeBtn">Carica/aggiorna foto</button></p>
   </div>
 
   <form id="form" class="hidden">
@@ -41,13 +36,44 @@
 </div>
 
 <script>
-  // ====== CONFIG ======
-  // Passaggio attraverso il Worker Cloudflare
-  const BACKEND_URL = "https://qc-proxy.design-fluxitalia.workers.dev";
-  // =====================
+  // URL della Web App (quella che ti funziona per GET /meta)
+  const BACKEND_URL =
+    "https://script.google.com/macros/s/AKfycbzI--rotLUR_6FcU8MsmERwjuUPUSOILoHzpdOSehxPB_RM-DPZxxS4gP_W2zzLhez_/exec";
 
-  const qs = new URLSearchParams(location.search);
-  const id = qs.get("id");
+  // --- ID extraction robusta -----------------------------------------------
+  function getIdFromUrl() {
+    const u = new URL(location.href);
+
+    // 1) query param (case-insensitive)
+    let found = null;
+    for (const [k, v] of u.searchParams.entries()) {
+      if (k.toLowerCase() === "id" && v) { found = v; break; }
+    }
+    if (found) return found;
+
+    // 2) hash: #id=QC-...
+    if (u.hash) {
+      const h = new URLSearchParams(u.hash.replace(/^#/, ""));
+      for (const [k, v] of h.entries()) {
+        if (k.toLowerCase() === "id" && v) { return v; }
+      }
+    }
+
+    // 3) ultimo segmento del path /qc-redirect/QC-TEST-0001
+    const seg = u.pathname.split("/").filter(Boolean);
+    const last = seg[seg.length - 1];
+    if (last && /^QC[-_]/i.test(last)) return last;
+
+    // 4) fallback: localStorage (memorizzato quando lo troviamo)
+    const saved = localStorage.getItem("qc_last_id");
+    if (saved) return saved;
+
+    return null;
+  }
+  function saveLastId(id) {
+    try { localStorage.setItem("qc_last_id", id); } catch {}
+  }
+  // -------------------------------------------------------------------------
 
   const $ = s => document.querySelector(s);
   const statusEl = $("#status");
@@ -58,32 +84,37 @@
   const fileEl = $("#file");
   const changeBtn = $("#changeBtn");
 
-  function setStatus(msg, cls=""){
-    statusEl.className = "muted " + (cls||"");
-    statusEl.textContent = msg;
-  }
+  let id = getIdFromUrl();
 
-  (async function init(){
-    if(!id){ setStatus("❌ ID mancante (usa ?id=QC-...)", "error"); return; }
-    idEl.textContent = id;
-
+  async function loadMeta() {
     try{
-      const metaUrl = `${BACKEND_URL}?action=meta&id=${encodeURIComponent(id)}`;
-      const meta = await fetch(metaUrl, {cache:"no-store"}).then(r=>r.json());
-
+      const meta = await fetch(`${BACKEND_URL}?action=meta&id=${encodeURIComponent(id)}`, {cache:"no-store"})
+        .then(r=>r.json());
       if(meta.ok && meta.exists){
         imgEl.src = meta.viewUrl;
-        setStatus("Foto trovata", "ok");
+        statusEl.textContent = "Foto trovata";
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
       }else{
-        setStatus("Nessuna foto: scatta o carica");
+        statusEl.textContent = "Nessuna foto: scatta o carica";
         viewWrap.classList.add("hidden");
         formEl.classList.remove("hidden");
       }
     }catch(e){
-      setStatus("Errore di connessione", "error");
+      statusEl.textContent = "Errore di connessione";
     }
+  }
+
+  (async function init(){
+    if(!id){
+      statusEl.innerHTML =
+        `<span class="err">❌ missing id</span><br><small class="muted">URL visto: <code>${location.href}</code></small>`;
+      formEl.classList.add("hidden");
+      return;
+    }
+    saveLastId(id);        // così abbiamo un fallback per i prossimi accessi
+    idEl.textContent = id; // per debug visivo
+    await loadMeta();
   })();
 
   changeBtn?.addEventListener("click", ()=>{
@@ -91,48 +122,31 @@
     formEl.classList.remove("hidden");
   });
 
-  // Upload in JSON + base64
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
+    if(!id){
+      statusEl.innerHTML = `<span class="err">❌ missing id</span>`;
+      return;
+    }
     const f = fileEl.files[0];
     if(!f){ alert("Seleziona una foto"); return; }
-
-    setStatus("Caricamento…");
-
+    statusEl.textContent = "Caricamento…";
     try{
-      // Leggi il file come DataURL e prendi solo la parte base64
-      const b64 = await new Promise((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onload = () => {
-          const dataUrl = String(fr.result || "");
-          resolve(dataUrl.split(",")[1] || "");
-        };
-        fr.onerror = reject;
-        fr.readAsDataURL(f);
-      });
-
-      const res = await fetch(BACKEND_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id,
-          filename: f.name || "photo.jpg",
-          mime: f.type || "image/jpeg",
-          b64
-        }),
-      });
-
+      const fd = new FormData();
+      fd.append("id", id);               // **ID sempre incluso**
+      fd.append("photo", f, "photo.jpg"); // **il file si chiama "photo"**
+      const res = await fetch(BACKEND_URL, { method:"POST", body: fd });
       const json = await res.json();
       if(json.ok){
-        imgEl.src = json.viewUrl + `&ts=${Date.now()}`; // anti-cache
-        setStatus("✅ Caricata", "ok");
+        imgEl.src = json.viewUrl + `&ts=${Date.now()}`;
+        statusEl.textContent = "✅ Caricata";
         formEl.classList.add("hidden");
         viewWrap.classList.remove("hidden");
       }else{
-        setStatus("❌ " + (json.error || "Errore"), "error");
+        statusEl.innerHTML = `<span class="err">❌ ${json.error || "Errore"}</span>`;
       }
     }catch(e){
-      setStatus("❌ Errore di rete", "error");
+      statusEl.innerHTML = `<span class="err">❌ Errore di rete</span>`;
     }
   });
 </script>
