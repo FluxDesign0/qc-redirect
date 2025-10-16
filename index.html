@@ -5,94 +5,121 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>QC Photo</title>
   <style>
-    :root { color-scheme: light dark; }
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:16px}
-    .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #2d3748;border-radius:12px}
-    h1{margin:0 0 12px;font-size:18px}
-    .muted{opacity:.7;font-size:13px}
-    img{max-width:100%;height:auto;border:1px solid #2d3748;border-radius:8px}
-    button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff}
+    :root{color-scheme:light dark}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:16px;background:#0b0f17}
+    .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #1f2a44;border-radius:12px;background:#0f1522}
+    h1{margin:0 0 12px;font-size:20px;color:#fff}
+    .muted{color:#93a4c1;font-size:13px;word-break:break-all}
+    .bad{color:#ff6b6b}
+    .ok{color:#3ddc97}
+    img{max-width:100%;height:auto;border:1px solid #1f2a44;border-radius:8px}
+    button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
     input[type=file]{display:block;margin:12px 0}
+    input[type=text]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #1f2a44;background:#0b0f17;color:#e6edf6}
     .hidden{display:none}
-    code{padding:2px 6px;border-radius:6px;background:rgba(125,125,125,.15)}
-    .err{color:#ff6b6b}
+    .row{margin-top:10px}
   </style>
 </head>
 <body>
 <div class="card">
   <h1>QC Photo</h1>
-  <div id="status" class="muted">Inizializzo…</div>
 
-  <div id="viewWrap" class="hidden">
-    <p class="muted">Foto per <code id="cid"></code>:</p>
-    <img id="photo" alt="QC photo">
-    <p><button id="changeBtn">Carica/aggiorna foto</button></p>
+  <div id="status" class="muted">Inizializzo…</div>
+  <div id="debug" class="muted row"></div>
+
+  <div id="fallback" class="row hidden">
+    <div class="muted">Inserisci manualmente l’ID (es. <code>QC-20251015-0001</code>)</div>
+    <input id="idInput" type="text" placeholder="QC-…" />
+    <div class="row"><button id="idBtn" type="button">Usa questo ID</button></div>
   </div>
 
-  <form id="form" class="hidden">
+  <div id="viewWrap" class="hidden row">
+    <p class="muted">Foto per <code id="cid"></code>:</p>
+    <img id="photo" alt="QC photo">
+    <p class="row"><button id="changeBtn">Carica/aggiorna foto</button></p>
+  </div>
+
+  <form id="form" class="hidden row">
     <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
     <p><button type="submit">Carica</button></p>
   </form>
 </div>
 
 <script>
-  // URL della Web App (quella che ti funziona per GET /meta)
+  // ========= CONFIG =========
+  // Lascia questo BACKEND_URL uguale a quello già in uso (quello che hai indicato che funziona).
+  // Se vuoi, puoi rimettere il tuo valore qui sotto.
   const BACKEND_URL =
-    "https://script.google.com/macros/s/AKfycbzI--rotLUR_6FcU8MsmERwjuUPUSOILoHzpdOSehxPB_RM-DPZxxS4gP_W2zzLhez_/exec";
-
-  // --- ID extraction robusta -----------------------------------------------
-  function getIdFromUrl() {
-    const u = new URL(location.href);
-
-    // 1) query param (case-insensitive)
-    let found = null;
-    for (const [k, v] of u.searchParams.entries()) {
-      if (k.toLowerCase() === "id" && v) { found = v; break; }
-    }
-    if (found) return found;
-
-    // 2) hash: #id=QC-...
-    if (u.hash) {
-      const h = new URLSearchParams(u.hash.replace(/^#/, ""));
-      for (const [k, v] of h.entries()) {
-        if (k.toLowerCase() === "id" && v) { return v; }
-      }
-    }
-
-    // 3) ultimo segmento del path /qc-redirect/QC-TEST-0001
-    const seg = u.pathname.split("/").filter(Boolean);
-    const last = seg[seg.length - 1];
-    if (last && /^QC[-_]/i.test(last)) return last;
-
-    // 4) fallback: localStorage (memorizzato quando lo troviamo)
-    const saved = localStorage.getItem("qc_last_id");
-    if (saved) return saved;
-
-    return null;
-  }
-  function saveLastId(id) {
-    try { localStorage.setItem("qc_last_id", id); } catch {}
-  }
-  // -------------------------------------------------------------------------
+    "https://script.google.com/a/gmail.com/macros/s/AKfycbzI--rotLUR_6FcU8MsmERwjuUPUSOILoHzpdOSehxPB_RM-DPZxxS4gP_W2zzLhez_/exec";
+  // ==========================
 
   const $ = s => document.querySelector(s);
   const statusEl = $("#status");
+  const debugEl = $("#debug");
   const viewWrap = $("#viewWrap");
   const imgEl = $("#photo");
   const idEl = $("#cid");
   const formEl = $("#form");
   const fileEl = $("#file");
   const changeBtn = $("#changeBtn");
+  const fallback = $("#fallback");
+  const idInput = $("#idInput");
+  const idBtn = $("#idBtn");
 
-  let id = getIdFromUrl();
+  function logDebug(fullUrl, foundId){
+    debugEl.innerHTML =
+      `<div>URL visto: <code>${fullUrl}</code></div>` +
+      `<div>ID rilevato: <code>${foundId ?? "(nessuno)"}</code></div>`;
+  }
 
-  async function loadMeta() {
+  function extractIdFromUrl(u){
     try{
-      const meta = await fetch(`${BACKEND_URL}?action=meta&id=${encodeURIComponent(id)}`, {cache:"no-store"})
-        .then(r=>r.json());
+      const url = new URL(u);
+
+      // 1) param "id" case-insensitive
+      for (const [k,v] of url.searchParams.entries()){
+        if (k.toLowerCase() === "id" && v) return v.trim();
+      }
+
+      // 2) hash #id=...
+      const hm = url.hash.match(/[?#&]id=([^&]+)/i) || url.hash.match(/id=([^&]+)/i);
+      if (hm && hm[1]) return decodeURIComponent(hm[1]).trim();
+
+      // 3) qualunque QC-… dentro href (gestisce redirect strani)
+      const rx = /(QC-[A-Za-z0-9_-]+(?:-\d{4})?)/i;
+      const m = url.href.match(rx);
+      if (m && m[1]) return m[1].trim();
+
+      return null;
+    }catch(e){
+      return null;
+    }
+  }
+
+  async function boot(withId){
+    const full = location.href;
+    let id = withId ?? extractIdFromUrl(full);
+    logDebug(full, id);
+
+    if(!id){
+      statusEl.innerHTML = `<span class="bad">❌ missing id</span>`;
+      fallback.classList.remove("hidden");
+      formEl.classList.add("hidden");
+      viewWrap.classList.add("hidden");
+      return;
+    }
+
+    idEl.textContent = id;
+    fallback.classList.add("hidden");
+
+    try{
+      statusEl.textContent = "Controllo foto…";
+      const metaUrl = `${BACKEND_URL}?action=meta&id=${encodeURIComponent(id)}`;
+      const meta = await fetch(metaUrl, {cache:"no-store"}).then(r=>r.json());
+
       if(meta.ok && meta.exists){
         imgEl.src = meta.viewUrl;
-        statusEl.textContent = "Foto trovata";
+        statusEl.innerHTML = `<span class="ok">Foto trovata</span>`;
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
       }else{
@@ -101,54 +128,47 @@
         formEl.classList.remove("hidden");
       }
     }catch(e){
-      statusEl.textContent = "Errore di connessione";
+      statusEl.innerHTML = `<span class="bad">Errore di connessione</span>`;
     }
+
+    changeBtn?.addEventListener("click", ()=>{
+      viewWrap.classList.add("hidden");
+      formEl.classList.remove("hidden");
+    });
+
+    formEl.onsubmit = async (ev)=>{
+      ev.preventDefault();
+      const f = fileEl.files[0];
+      if(!f){ alert("Seleziona una foto"); return; }
+      statusEl.textContent = "Caricamento…";
+      try{
+        const fd = new FormData();
+        fd.append("id", id);
+        fd.append("photo", f, "photo.jpg");
+        const res = await fetch(BACKEND_URL, { method:"POST", body: fd });
+        const json = await res.json();
+        if(json.ok){
+          imgEl.src = json.viewUrl + `&ts=${Date.now()}`;
+          statusEl.innerHTML = `<span class="ok">✅ Caricata</span>`;
+          formEl.classList.add("hidden");
+          viewWrap.classList.remove("hidden");
+        }else{
+          statusEl.innerHTML = `<span class="bad">❌ ${json.error || "Errore"}</span>`;
+        }
+      }catch(e){
+        statusEl.innerHTML = `<span class="bad">❌ Errore di rete</span>`;
+      }
+    };
   }
 
-  (async function init(){
-    if(!id){
-      statusEl.innerHTML =
-        `<span class="err">❌ missing id</span><br><small class="muted">URL visto: <code>${location.href}</code></small>`;
-      formEl.classList.add("hidden");
-      return;
-    }
-    saveLastId(id);        // così abbiamo un fallback per i prossimi accessi
-    idEl.textContent = id; // per debug visivo
-    await loadMeta();
-  })();
-
-  changeBtn?.addEventListener("click", ()=>{
-    viewWrap.classList.add("hidden");
-    formEl.classList.remove("hidden");
+  idBtn?.addEventListener("click", ()=>{
+    const val = (idInput.value || "").trim();
+    if(!val){ idInput.focus(); return; }
+    boot(val);
   });
 
-  formEl.addEventListener("submit", async (ev)=>{
-    ev.preventDefault();
-    if(!id){
-      statusEl.innerHTML = `<span class="err">❌ missing id</span>`;
-      return;
-    }
-    const f = fileEl.files[0];
-    if(!f){ alert("Seleziona una foto"); return; }
-    statusEl.textContent = "Caricamento…";
-    try{
-      const fd = new FormData();
-      fd.append("id", id);               // **ID sempre incluso**
-      fd.append("photo", f, "photo.jpg"); // **il file si chiama "photo"**
-      const res = await fetch(BACKEND_URL, { method:"POST", body: fd });
-      const json = await res.json();
-      if(json.ok){
-        imgEl.src = json.viewUrl + `&ts=${Date.now()}`;
-        statusEl.textContent = "✅ Caricata";
-        formEl.classList.add("hidden");
-        viewWrap.classList.remove("hidden");
-      }else{
-        statusEl.innerHTML = `<span class="err">❌ ${json.error || "Errore"}</span>`;
-      }
-    }catch(e){
-      statusEl.innerHTML = `<span class="err">❌ Errore di rete</span>`;
-    }
-  });
+  // Avvio
+  boot();
 </script>
 </body>
 </html>
