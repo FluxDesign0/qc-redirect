@@ -33,9 +33,8 @@
 </div>
 
 <script>
-  // URL della tua Web App (con /a/gmail.com per sicurezza)
-  const BACKEND_URL =
-    "https://script.google.com/a/gmail.com/macros/s/AKfycbzI--rotLUR_6FcU8MsmERwjuUPUSOILoHzpdOSehxPB_RM-DPZxxS4gP_W2zzLhez_/exec";
+  // Punta al Worker (proxy), così Android/Chrome non vede mai script.google.com
+  const BACKEND_URL = "https://qc-proxy.design-fluxitalia.workers.dev";
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
