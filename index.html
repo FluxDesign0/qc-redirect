@@ -17,6 +17,7 @@
     .ok{color:#16a34a}
     .err{color:#ef4444}
     code{background:#0b1220;padding:2px 6px;border-radius:6px}
+    pre{white-space:pre-wrap;word-break:break-word}
   </style>
 </head>
 <body>
@@ -28,10 +29,10 @@
       <p class="muted">Foto per <code id="cid"></code>:</p>
       <img id="photo" alt="QC photo">
       <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
+      <p class="muted"><a id="openLink" href="#" target="_blank" rel="noopener">Apri immagine in nuova scheda ↗</a></p>
     </div>
 
     <form id="form" class="hidden">
-      <!-- Suggerisce la fotocamera posteriore su mobile -->
       <input type="file" id="file" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
@@ -40,13 +41,10 @@
   </div>
 
 <script>
-  // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // <— tuo Worker
-  // ====================
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
-  const showDebug = qs.get("debug")==="1" || qs.get("d")==="1";
 
   const $ = s => document.querySelector(s);
   const statusEl = $("#status");
@@ -57,7 +55,9 @@
   const fileEl   = $("#file");
   const uploadBtn= $("#uploadBtn");
   const changeBtn= $("#changeBtn");
+  const openLink = $("#openLink");
   const debugEl  = $("#debug");
+  const showDebug = qs.get("debug")==="1";
 
   function setStatus(msg, cls) {
     statusEl.textContent = msg;
@@ -68,6 +68,11 @@
     if(!showDebug) return;
     debugEl.classList.remove("hidden");
     debugEl.textContent += lines.join("\n") + "\n";
+  }
+  function showImage(url) {
+    const prox = `${PROXY_URL}?img=${encodeURIComponent(url)}&ts=${Date.now()}`;
+    imgEl.src = prox;
+    openLink.href = url; // link diretto (utile se vuoi aprirla a parte)
   }
 
   (async function init(){
@@ -83,18 +88,16 @@
 
     try{
       const r = await fetch(metaUrl, { cache:"no-store" });
-      const ct = r.headers.get("Content-Type") || "";
       const text = await r.text();
-      dbg("META HTTP:", r.status, "\nCT:", ct, "\nBODY:\n", text.slice(0,400));
-
       let meta;
       try { meta = JSON.parse(text); } catch {
         setStatus("Errore di connessione", "err");
+        dbg("META HTTP:", r.status, "CT:", r.headers.get("Content-Type"), "\nBODY:\n", text.slice(0,800));
         return;
       }
 
       if(meta.ok && meta.exists && meta.viewUrl){
-        imgEl.src = meta.viewUrl + `&ts=${Date.now()}`;
+        showImage(meta.viewUrl);
         setStatus("Foto trovata", "ok");
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
@@ -115,7 +118,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // === UPLOAD in modalità RAW (body = file, id nella query) ===
+  // ---- UPLOAD: FormData (campo "photo") ----
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -128,20 +131,18 @@
       const uploadUrl = `${PROXY_URL}?id=${encodeURIComponent(id)}`;
       dbg("UPLOAD →", uploadUrl);
 
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": f.type || "application/octet-stream" },
-        body: f
-      });
+      const fd = new FormData();
+      fd.append("id", id);
+      fd.append("photo", f, "photo.jpg");
 
-      const ct = res.headers.get("Content-Type") || "";
+      const res = await fetch(uploadUrl, { method: "POST", body: fd });
       const txt = await res.text();
-      dbg("UPLOAD HTTP:", res.status, "\nCT:", ct, "\nBODY:\n", txt.slice(0,400));
+      dbg("UPLOAD HTTP:", res.status, "\nCT:", res.headers.get("Content-Type"), "\nBODY:\n", txt.slice(0,800));
 
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
       if(json && json.ok && json.viewUrl){
-        imgEl.src = json.viewUrl + `&ts=${Date.now()}`; // anti-cache
+        showImage(json.viewUrl);
         setStatus("✅ Caricata", "ok");
         formEl.classList.add("hidden");
         viewWrap.classList.remove("hidden");
