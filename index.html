@@ -59,14 +59,18 @@
   function showInfo(txt){ statusEl.textContent = txt; }
   const sleep = (ms)=> new Promise(r=>setTimeout(r,ms));
 
-  async function headOk(url) {
-    try {
-      const r = await fetch(url + (url.includes("?")?"&":"?") + "ts=" + Date.now(), {
-        method: "HEAD",
-        cache: "no-store"
-      });
-      return r.ok && r.status >= 200 && r.status < 400;
-    } catch { return false; }
+  // PROBE immagine (niente HEAD/CORS): crea un <img> in memoria e aspetta onload/onerror
+  function imageProbe(url, timeoutMs=2500){
+    return new Promise(resolve=>{
+      const img = new Image();
+      let done = false;
+      const to = setTimeout(()=>{ if(!done){ done=true; cleanup(); resolve(false); } }, timeoutMs);
+      function cleanup(){ clearTimeout(to); img.onload=null; img.onerror=null; }
+      img.onload = ()=>{ if(!done){ done=true; cleanup(); resolve(true); } };
+      img.onerror = ()=>{ if(!done){ done=true; cleanup(); resolve(false); } };
+      // cache-buster
+      img.src = url + (url.includes("?")?"&":"?") + "ts=" + Date.now();
+    });
   }
 
   async function fetchMetaOnce(id){
@@ -83,29 +87,23 @@
   }
 
   async function loadMetaWithRetry(id){
-    // tenta per ~30s con backoff: 0.8s, 1.2s, 1.8s, ... max 3s
     let attempt = 0;
     let viewUrl = null;
-    while (attempt < 15) {
+    while (attempt < 15) { // ~30-35s max
       const meta = await fetchMetaOnce(id);
       if (!meta.ok) throw new Error(meta.error || "META fallita");
       if (meta.exists && meta.viewUrl) {
-        // controlla che l'immagine sia ottenibile (HEAD 200)
-        if (await headOk(meta.viewUrl)) {
-          viewUrl = meta.viewUrl;
-          break;
-        } else {
-          showInfo("Immagine non ancora disponibile, ritento…");
-        }
+        const ok = await imageProbe(meta.viewUrl); // <— qui il cambio
+        if (ok) { viewUrl = meta.viewUrl; break; }
+        showInfo("Immagine non ancora disponibile, ritento…");
       } else {
-        // nessuna foto: mostra form
         return { exists:false };
       }
       attempt++;
-      const wait = Math.min(3000, 800 + attempt*400); // 0.8s → 3s
+      const wait = Math.min(3000, 800 + attempt*400);
       await sleep(wait);
     }
-    if (!viewUrl) return { exists:false }; // non è pronta: fai caricare
+    if (!viewUrl) return { exists:false };
     return { exists:true, viewUrl };
   }
 
@@ -155,6 +153,12 @@
       }
 
       if(json.ok && json.viewUrl){
+        // dopo l’upload, verifichiamo che sia servibile (Drive può impiegare qualche secondo)
+        const ok = await imageProbe(json.viewUrl);
+        if(!ok){
+          showInfo("Immagine caricata, preparo l’anteprima…");
+          await loadMetaWithRetry(id); // ripassa dal giro “META+probe”
+        }
         imgEl.src = json.viewUrl + `&ts=${Date.now()}`;
         statusEl.innerHTML = `<span class="ok">✅ Caricata</span>`;
         formEl.classList.add("hidden");
