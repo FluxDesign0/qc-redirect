@@ -10,7 +10,7 @@
     .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #e5e7eb;border-radius:12px}
     h1{margin:0 0 12px;font-size:18px}
     .muted{opacity:.85;font-size:13px;white-space:pre-wrap;word-break:break-word}
-    img{max-width:100%;height:auto;border:1px solid #e5e7eb;border-radius:8px}
+    img{max-width:100%;height:auto;border:1px solid #e5e7eb;border-radius:8px;background:#000}
     button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff}
     input[type=file]{display:block;margin:12px 0}
     .hidden{display:none}
@@ -30,13 +30,12 @@
   </div>
 
   <form id="form" class="hidden">
-    <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
-    <p><button type="submit">Carica</button></p>
+    <input type="file" id="file" accept="image/*" capture="environment" />
+    <p><button id="uploadBtn" type="submit">Carica</button></p>
   </form>
 </div>
 
 <script>
-  // ===== CONFIG =====
   const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
 
   const qs = new URLSearchParams(location.search);
@@ -49,128 +48,90 @@
   const idEl = $("#cid");
   const formEl = $("#form");
   const fileEl = $("#file");
+  const uploadBtn = $("#uploadBtn");
   const changeBtn = $("#changeBtn");
 
-  const debug = qs.get("debug") === "1";
-
-  function showError(title, extra="") {
-    statusEl.innerHTML = `<span class="err">❌ ${title}</span>` + (extra ? `\n${extra}` : "");
+  function setStatus(msg, cls){
+    statusEl.textContent = msg;
+    statusEl.classList.toggle("ok", cls==="ok");
+    statusEl.classList.toggle("err", cls==="err");
   }
-  function showInfo(txt){ statusEl.textContent = txt; }
-  const sleep = (ms)=> new Promise(r=>setTimeout(r,ms));
-
-  // PROBE immagine (niente HEAD/CORS): crea un <img> in memoria e aspetta onload/onerror
-  function imageProbe(url, timeoutMs=2500){
-    return new Promise(resolve=>{
-      const img = new Image();
-      let done = false;
-      const to = setTimeout(()=>{ if(!done){ done=true; cleanup(); resolve(false); } }, timeoutMs);
-      function cleanup(){ clearTimeout(to); img.onload=null; img.onerror=null; }
-      img.onload = ()=>{ if(!done){ done=true; cleanup(); resolve(true); } };
-      img.onerror = ()=>{ if(!done){ done=true; cleanup(); resolve(false); } };
-      // cache-buster
-      img.src = url + (url.includes("?")?"&":"?") + "ts=" + Date.now();
-    });
-  }
-
-  async function fetchMetaOnce(id){
-    const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
-    const r = await fetch(metaUrl, {cache:"no-store"});
+  async function getJson(url, init){
+    const r = await fetch(url, init);
     const t = await r.text();
-    try {
-      const j = JSON.parse(t);
-      if (debug) console.log("META:", j);
-      return j;
-    } catch {
-      throw new Error(`META non JSON (HTTP ${r.status}): ${t.slice(0,300)}`);
-    }
+    try { return {ok:true, status:r.status, json:JSON.parse(t)}; }
+    catch { return {ok:false, status:r.status, raw:t}; }
   }
 
-  async function loadMetaWithRetry(id){
-    let attempt = 0;
-    let viewUrl = null;
-    while (attempt < 15) { // ~30-35s max
-      const meta = await fetchMetaOnce(id);
-      if (!meta.ok) throw new Error(meta.error || "META fallita");
-      if (meta.exists && meta.viewUrl) {
-        const ok = await imageProbe(meta.viewUrl); // <— qui il cambio
-        if (ok) { viewUrl = meta.viewUrl; break; }
-        showInfo("Immagine non ancora disponibile, ritento…");
-      } else {
-        return { exists:false };
-      }
-      attempt++;
-      const wait = Math.min(3000, 800 + attempt*400);
-      await sleep(wait);
+  async function showImageFromBackend(){
+    // usa action=img (ritorna dataUrl)
+    const u = `${PROXY_URL}?action=img&id=${encodeURIComponent(id)}`;
+    const res = await getJson(u, { cache:'no-store' });
+    if (!res.ok || !res.json) {
+      setStatus("Errore di connessione", "err");
+      return false;
     }
-    if (!viewUrl) return { exists:false };
-    return { exists:true, viewUrl };
-  }
+    if (!res.json.ok) {
+      // non trovata: resta in modalità upload
+      return false;
+    }
+    // ok: imposta data URL
+    imgEl.src = res.json.dataUrl;
+    viewWrap.classList.remove("hidden");
+    formEl.classList.add("hidden");
+    setStatus("Foto trovata", "ok");
+    return true;
+    }
 
   async function init(){
-    if(!id){ showError("missing id"); return; }
+    if(!id){ setStatus("❌ ID mancante (usa ?id=QC-0001)", "err"); return; }
     idEl.textContent = id;
 
-    try{
-      const meta = await loadMetaWithRetry(id);
-      if (meta.exists && meta.viewUrl){
-        imgEl.src = meta.viewUrl + `&ts=${Date.now()}`;
-        statusEl.innerHTML = `<span class="ok">Foto trovata</span>`;
-        viewWrap.classList.remove("hidden");
-        formEl.classList.add("hidden");
-      } else {
-        statusEl.textContent = "Nessuna foto: scatta o carica";
-        viewWrap.classList.add("hidden");
-        formEl.classList.remove("hidden");
-      }
-    }catch(e){
-      showError("Errore di connessione", String(e));
+    // se esiste già, mostrala subito via data URL
+    const ok = await showImageFromBackend();
+    if (!ok) {
+      setStatus("Nessuna foto: scatta o carica");
+      viewWrap.classList.add("hidden");
+      formEl.classList.remove("hidden");
     }
   }
 
   changeBtn?.addEventListener("click", ()=>{
     viewWrap.classList.add("hidden");
     formEl.classList.remove("hidden");
+    setStatus("Seleziona/scatta una foto");
   });
 
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
-    const f = fileEl.files[0];
-    if(!f){ alert("Seleziona una foto"); return; }
-    showInfo("Caricamento…");
+    const f = fileEl.files && fileEl.files[0];
+    if(!f){ alert("Seleziona o scatta una foto"); return; }
+
+    setStatus("Caricamento…");
+    uploadBtn.disabled = true;
 
     try{
-      // Upload RAW: il Worker passa il body integro
+      // Upload RAW (file come body) + id in query
       const res = await fetch(`${PROXY_URL}?id=${encodeURIComponent(id)}`, {
         method: "POST",
-        headers: { "Content-Type": f.type || "image/jpeg" },
+        headers: { "Content-Type": f.type || "application/octet-stream" },
         body: f
       });
-      const txt = await res.text();
-      let json;
-      try { json = JSON.parse(txt); } catch {
-        return showError(`Errore upload (HTTP ${res.status})`, txt.slice(0,400));
-      }
+      const t = await res.text();
+      let j; try { j = JSON.parse(t); } catch { j = null; }
 
-      if(json.ok && json.viewUrl){
-        // dopo l’upload, verifichiamo che sia servibile (Drive può impiegare qualche secondo)
-        const ok = await imageProbe(json.viewUrl);
-        if(!ok){
-          showInfo("Immagine caricata, preparo l’anteprima…");
-          await loadMetaWithRetry(id); // ripassa dal giro “META+probe”
-        }
-        imgEl.src = json.viewUrl + `&ts=${Date.now()}`;
-        statusEl.innerHTML = `<span class="ok">✅ Caricata</span>`;
-        formEl.classList.add("hidden");
-        viewWrap.classList.remove("hidden");
-      }else{
-        showError(json.error || "Errore upload",
-                  `META → ${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}\n`+
-                  `UPLOAD → ${PROXY_URL}?id=${encodeURIComponent(id)}\n`+
-                  `HTTP: ${res.status}\nBODY: ${txt.slice(0,400)}`);
+      if (j && j.ok) {
+        // subito dopo l’upload, prendi la data URL dal backend e mostrala
+        await new Promise(r=>setTimeout(r,200)); // micro respiro
+        await showImageFromBackend();
+        setStatus("✅ Caricata", "ok");
+      } else {
+        setStatus("❌ " + ((j && j.error) || `Errore upload (HTTP ${res.status})`), "err");
       }
     }catch(e){
-      showError("fetch_failed", String(e));
+      setStatus("❌ Errore di rete", "err");
+    }finally{
+      uploadBtn.disabled = false;
     }
   });
 
