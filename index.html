@@ -31,7 +31,6 @@
     </div>
 
     <form id="form" class="hidden">
-      <!-- Suggerisce la fotocamera posteriore su mobile -->
       <input type="file" id="file" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
@@ -41,7 +40,7 @@
 
 <script>
   // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker con CORS
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker (CORS)
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -77,7 +76,6 @@
     }
     idEl.textContent = id;
 
-    // META via Worker: se esiste, mostra direttamente la foto
     const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
     dbg("META →", metaUrl);
 
@@ -113,7 +111,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // ========= UPLOAD SICURO: multipart/form-data (FormData) =========
+  // ========= UPLOAD ROBUSTO: JSON Base64 =========
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -123,16 +121,31 @@
     uploadBtn.disabled = true;
 
     try{
+      // Leggi file come DataURL e prendi solo la parte Base64
+      const b64 = await new Promise((resolve, reject)=>{
+        const reader = new FileReader();
+        reader.onload = () => {
+          const res = String(reader.result || '');
+          const comma = res.indexOf(',');
+          resolve(comma >= 0 ? res.slice(comma+1) : res);
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(f);
+      });
+
+      const payload = {
+        b64,
+        mime: f.type || 'application/octet-stream',
+        name: f.name || 'upload'
+      };
+
       const uploadUrl = `${PROXY_URL}?id=${encodeURIComponent(id)}`;
       dbg("UPLOAD →", uploadUrl, "file:", f.name, "type:", f.type);
 
-      // IMPORTANTISSIMO: usare FormData e NON impostare Content-Type a mano
-      const fd = new FormData();
-      fd.append("photo", f, f.name); // "photo" corrisponde a e.files.photo nel backend GAS
-
       const res = await fetch(uploadUrl, {
         method: "POST",
-        body: fd
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       });
 
       const txt = await res.text();
