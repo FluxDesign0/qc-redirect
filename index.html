@@ -38,14 +38,11 @@
           method="POST"
           enctype="multipart/form-data"
           target="uploadFrame">
-      <!-- L’ID lo mandiamo come campo hidden -->
       <input type="hidden" name="id" id="hiddenId" />
-      <!-- Il file deve chiamarsi "photo" -->
       <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
 
-    <!-- Iframe nascosto per ricevere la risposta di Google (seguono loro i redirect) -->
     <iframe name="uploadFrame" id="uploadFrame" class="hidden" style="display:none;"></iframe>
 
     <pre id="debug" class="muted hidden"></pre>
@@ -53,10 +50,10 @@
 
 <script>
   // ====== CONFIG ======
-  const PROXY_URL        = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker per META e img proxy
-  const APPS_SCRIPT_URL  = "PASTE_HERE_YOUR_APPS_SCRIPT_EXEC_URL";            // <-- << METTI QUI la tua URL /exec di GAS
-  const POLL_MS          = 1500;
-  const POLL_MAX_TRIES   = 10;
+  const PROXY_URL       = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker per META & img proxy
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxbkSXyTWmdlRtlk2WQykQbx4m2bMmbSUdzJctM5TmfQ-JoaPd8IChNzQIU8Ycin2Sf/exec"; // TUO /exec
+  const POLL_MS         = 1200;
+  const POLL_MAX_TRIES  = 15;
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -97,7 +94,7 @@
   async function pollForImage(id){
     for (let i=0;i<POLL_MAX_TRIES;i++){
       try{
-        const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
+        const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}&ts=${Date.now()}`;
         dbg("POLL META →", metaUrl);
         const r = await fetch(metaUrl, { cache:"no-store" });
         const txt = await r.text();
@@ -121,11 +118,15 @@
     idEl.textContent = id;
     hiddenId.value = id;
 
-    // Imposta la destinazione del form: Apps Script /exec (con ID anche in query per extra robustezza)
-    formEl.action = `${APPS_SCRIPT_URL}?id=${encodeURIComponent(id)}`;
+    // Imposta la destinazione del form e stampa debug
+    const actionUrl = `${APPS_SCRIPT_URL}?id=${encodeURIComponent(id)}`;
+    formEl.action = actionUrl;
 
-    // META iniziale (se esiste già una foto)
-    const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
+    dbg("FORM action:", actionUrl);
+    dbg("Hidden ID:", hiddenId.value);
+
+    // META iniziale
+    const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}&ts=${Date.now()}`;
     dbg("META →", metaUrl);
     try{
       const r = await fetch(metaUrl, { cache:"no-store" });
@@ -153,7 +154,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // Submit classico del FORM (multipart) → Apps Script gestisce redirect in automatico nell'iframe
+  // Submit del FORM (multipart) → Apps Script nell'IFRAME
   formEl.addEventListener("submit", async (ev)=>{
     if(!fileEl.files || !fileEl.files[0]){
       ev.preventDefault();
@@ -161,15 +162,11 @@
       return;
     }
     setStatus("Caricamento…");
-    uploadBtn.disabled = true;
 
-    // Lasciamo che il browser invii il form verso GAS nell'IFRAME.
-    // Quando il submit parte, iniziamo il polling meta.
-    // (Niente preventDefault: serve il submit reale per aggirare CORS/redirect)
+    // lascia partire il submit "vero"
     setTimeout(async ()=>{
       await pollForImage(id);
-      uploadBtn.disabled = false;
-    }, 100); // microscatto per non bloccare UI
+    }, 150);
   });
 </script>
 </body>
