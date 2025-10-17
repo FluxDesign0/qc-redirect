@@ -23,7 +23,7 @@
 </head>
 <body>
   <div class="card">
-    <h1>QC Photo</h1>
+    <h1>QC Photo <span class="muted" style="font-size:12px">v: form-blank</span></h1>
     <div id="status" class="muted">Inizializzo…</div>
 
     <div id="viewWrap" class="hidden">
@@ -33,17 +33,16 @@
       <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
     </div>
 
-    <!-- FORM HTML diretto verso Apps Script (NO fetch) -->
+    <!-- FORM diretto verso Apps Script: si apre in NUOVA SCHEDA -->
     <form id="form" class="hidden"
           method="POST"
           enctype="multipart/form-data"
-          target="uploadFrame">
+          target="_blank">
       <input type="hidden" name="id" id="hiddenId" />
       <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
+      <p class="muted">Dopo il click si aprirà una nuova scheda Google: puoi chiuderla; qui apparirà l’anteprima.</p>
     </form>
-
-    <iframe name="uploadFrame" id="uploadFrame" class="hidden" style="display:none;"></iframe>
 
     <pre id="debug" class="muted hidden"></pre>
   </div>
@@ -51,9 +50,9 @@
 <script>
   // ====== CONFIG ======
   const PROXY_URL       = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker per META & img proxy
-  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwETQl8Ie9dbkJlaJLYonQzavpGYoukP7ZguhHqOFoZS3_eMsfBSnGXWHK-nbFu4Bs/exec"; // TUO /exec
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwETQl8Ie9dbkJlaJLYonQzavpGYoukP7ZguhHqOFoZS3_eMsfBSnGXWHK-nbFu4Bs/exec"; // tuo /exec
   const POLL_MS         = 1200;
-  const POLL_MAX_TRIES  = 15;
+  const POLL_MAX_TRIES  = 20;
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -72,7 +71,6 @@
   const uploadBtn= $("#uploadBtn");
   const changeBtn= $("#changeBtn");
   const debugEl  = $("#debug");
-  const uploadFrame = $("#uploadFrame");
 
   function setStatus(msg, cls) {
     statusEl.textContent = msg;
@@ -90,12 +88,11 @@
     linkEl.href = url;
     linkEl.classList.remove("hidden");
   }
-
   async function pollForImage(id){
     for (let i=0;i<POLL_MAX_TRIES;i++){
+      const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}&ts=${Date.now()}`;
+      dbg("POLL META →", metaUrl);
       try{
-        const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}&ts=${Date.now()}`;
-        dbg("POLL META →", metaUrl);
         const r = await fetch(metaUrl, { cache:"no-store" });
         const txt = await r.text();
         let meta; try { meta = JSON.parse(txt); } catch { meta = null; }
@@ -118,11 +115,9 @@
     idEl.textContent = id;
     hiddenId.value = id;
 
-    // Imposta la destinazione del form e stampa debug
-    const actionUrl = `${APPS_SCRIPT_URL}?id=${encodeURIComponent(id)}`;
-    formEl.action = actionUrl;
-
-    dbg("FORM action:", actionUrl);
+    // Azione del form: Apps Script /exec (mettiamo anche id in query)
+    formEl.action = `${APPS_SCRIPT_URL}?id=${encodeURIComponent(id)}`;
+    dbg("FORM action:", formEl.action);
     dbg("Hidden ID:", hiddenId.value);
 
     // META iniziale
@@ -154,19 +149,16 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // Submit del FORM (multipart) → Apps Script nell'IFRAME
-  formEl.addEventListener("submit", async (ev)=>{
+  // Submit classico (apre nuova scheda verso GAS), poi poll finché la foto compare
+  formEl.addEventListener("submit", ()=>{
     if(!fileEl.files || !fileEl.files[0]){
-      ev.preventDefault();
       alert("Seleziona o scatta una foto");
-      return;
+      return false;
     }
     setStatus("Caricamento…");
-
-    // lascia partire il submit "vero"
-    setTimeout(async ()=>{
-      await pollForImage(id);
-    }, 150);
+    // inizia subito il polling: l’altra scheda esegue l’upload
+    setTimeout(()=>{ pollForImage(id); }, 300);
+    return true; // lascia procedere il submit (nuova scheda)
   });
 </script>
 </body>
