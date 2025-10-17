@@ -33,7 +33,6 @@
     </div>
 
     <form id="form" class="hidden">
-      <!-- Suggerisce la fotocamera posteriore su mobile -->
       <input type="file" id="file" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
@@ -43,10 +42,9 @@
 
 <script>
   // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker
-  // retry per la visualizzazione immagine
-  const IMG_RETRIES = 8;        // quante volte ritentare
-  const IMG_DELAY_MS = 3000;    // attesa tra i tentativi
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
+  const IMG_RETRIES = 8;
+  const IMG_DELAY_MS = 3000;
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -81,26 +79,20 @@
     return u.toString();
   }
 
-  // Carica immagine con retry automatico (cache-busting)
-  function loadImageWithRetry(baseUrl, attempts = IMG_RETRIES){
+  async function loadImageWithRetry(baseUrl, attempts = IMG_RETRIES){
     return new Promise((resolve)=>{
       let tries = 0;
-
       const tryOnce = () => {
         const src = withTs(baseUrl);
-        imgEl.onload = () => { resolve(true); };
+        imgEl.onload = () => resolve(true);
         imgEl.onerror = () => {
           tries++;
-          if (tries < attempts){
-            setTimeout(tryOnce, IMG_DELAY_MS);
-          } else {
-            resolve(false);
-          }
+          if (tries < attempts) setTimeout(tryOnce, IMG_DELAY_MS);
+          else resolve(false);
         };
         imgEl.src = src;
-        openLink.href = src; // link di servizio (apre subito comunque)
+        openLink.href = src;
       };
-
       tryOnce();
     });
   }
@@ -120,29 +112,24 @@
   }
 
   (async function init(){
-    if(!id){
-      setStatus("❌ ID mancante (usa ?id=QC-0001)", "err");
-      return;
-    }
+    if(!id){ setStatus("❌ ID mancante (usa ?id=QC-0001)", "err"); return; }
     idEl.textContent = id;
 
-    // META via Worker: se esiste, mostra la foto (con retry)
     const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
     dbg("META →", metaUrl);
 
     try{
       const r = await fetch(metaUrl, { cache:"no-store" });
-      const text = await r.text();
+      const txt = await r.text();
+      dbg("META HTTP:", r.status, "CT:", r.headers.get("content-type"));
       let meta;
-      try { meta = JSON.parse(text); } catch {
+      try { meta = JSON.parse(txt); } catch {
         setStatus("Errore di connessione", "err");
-        dbg("HTTP:", r.status, "BODY:", text.slice(0,500));
+        dbg("BODY:", txt.slice(0,500));
         return;
       }
-
-      if(meta.ok && meta.exists && meta.viewUrl){
-        await showImage(meta.viewUrl);
-      }else{
+      if(meta.ok && meta.exists && meta.viewUrl) await showImage(meta.viewUrl);
+      else {
         setStatus("Nessuna foto: scatta o carica");
         viewWrap.classList.add("hidden");
         formEl.classList.remove("hidden");
@@ -159,10 +146,9 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // UPLOAD in modalità RAW (no FormData): body = file, ID in querystring
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
-    const f = fileEl.files && fileEl.files[0];
+    const f = fileEl.files?.[0];
     if(!f){ alert("Seleziona o scatta una foto"); return; }
 
     setStatus("Caricamento…");
@@ -174,20 +160,33 @@
 
       const res = await fetch(uploadUrl, {
         method: "POST",
-        headers: { "Content-Type": f.type || "application/octet-stream" },
+        headers: { "Content-Type": f.type || "application/octet-stream", "Accept":"application/json" },
         body: f
       });
 
-      const txt = await res.text();
-      let json; try { json = JSON.parse(txt); } catch { json = null; }
+      const ct  = res.headers.get("content-type") || "";
+      const raw = await res.text();
+      dbg("UPLOAD HTTP:", res.status, "CT:", ct);
 
-      if(json && json.ok && json.viewUrl){
-        // Dopo l’upload: mostra subito la foto con retry e cache-busting
+      if (!ct.includes("application/json")){
+        setStatus("❌ expected application/json", "err");
+        dbg("BODY:", raw.slice(0,600));
+        return;
+      }
+
+      let json;
+      try { json = JSON.parse(raw); } catch {
+        setStatus("❌ JSON non valido", "err");
+        dbg("BODY:", raw.slice(0,600));
+        return;
+      }
+
+      if(json.ok && json.viewUrl){
         await showImage(json.viewUrl);
         setStatus("✅ Caricata", "ok");
       }else{
-        setStatus("❌ " + ((json && json.error) || "Errore upload"), "err");
-        dbg("UPLOAD HTTP:", res.status, "BODY:", txt.slice(0,500));
+        setStatus("❌ " + (json.error || "Errore upload"), "err");
+        dbg("BODY:", raw.slice(0,600));
       }
     }catch(e){
       setStatus("❌ Errore di rete", "err");
