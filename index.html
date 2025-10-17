@@ -146,6 +146,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
+  // Upload RAW: body = file, ID in querystring
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files?.[0];
@@ -160,7 +161,7 @@
 
       const res = await fetch(uploadUrl, {
         method: "POST",
-        headers: { "Content-Type": f.type || "application/octet-stream", "Accept":"application/json" },
+        headers: { "Content-Type": f.type || "application/octet-stream", "Accept": "application/json, */*;q=0.5" },
         body: f
       });
 
@@ -168,24 +169,19 @@
       const raw = await res.text();
       dbg("UPLOAD HTTP:", res.status, "CT:", ct);
 
-      if (!ct.includes("application/json")){
-        setStatus("❌ expected application/json", "err");
-        dbg("BODY:", raw.slice(0,600));
-        return;
-      }
+      // Prova SEMPRE a parsare JSON (anche senza header corretto),
+      // altrimenti mostra snippet utile.
+      let json = null;
+      try { json = JSON.parse(raw); } catch { json = null; }
 
-      let json;
-      try { json = JSON.parse(raw); } catch {
-        setStatus("❌ JSON non valido", "err");
-        dbg("BODY:", raw.slice(0,600));
-        return;
-      }
-
-      if(json.ok && json.viewUrl){
+      if(json && json.ok && json.viewUrl){
         await showImage(json.viewUrl);
         setStatus("✅ Caricata", "ok");
+      }else if(json && json.error){
+        setStatus("❌ " + json.error, "err");
+        dbg("BODY:", raw.slice(0,600));
       }else{
-        setStatus("❌ " + (json.error || "Errore upload"), "err");
+        setStatus("❌ Risposta non JSON", "err");
         dbg("BODY:", raw.slice(0,600));
       }
     }catch(e){
