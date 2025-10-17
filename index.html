@@ -39,7 +39,8 @@
   </div>
 
 <script>
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker
+  // Tuo Worker Cloudflare
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
@@ -74,6 +75,7 @@
     catch { return { ok:false, status:r.status, raw:t }; }
   }
 
+  // 1) tenta anteprima immediata (data URL)
   async function showDataUrl(){
     const url = `${PROXY_URL}?action=img&id=${encodeURIComponent(id)}`;
     const res = await getJSON(url, { cache:'no-store' });
@@ -81,7 +83,19 @@
       imgEl.src = res.json.dataUrl;
       viewWrap.classList.remove("hidden");
       formEl.classList.add("hidden");
-      setStatus("Foto trovata", "ok");
+      return true;
+    }
+    return false;
+  }
+
+  // 2) fallback: meta → viewUrl Drive
+  async function showViaMeta(){
+    const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
+    const res = await getJSON(metaUrl, { cache:"no-store" });
+    if (res.ok && res.json && res.json.ok && res.json.exists && res.json.viewUrl){
+      imgEl.src = res.json.viewUrl + `&ts=${Date.now()}`;
+      viewWrap.classList.remove("hidden");
+      formEl.classList.add("hidden");
       return true;
     }
     return false;
@@ -91,10 +105,10 @@
     if(!id){ setStatus("❌ ID mancante (usa ?id=QC-0001)", "err"); return; }
     idEl.textContent = id;
 
-    // 1) prova a mostrare direttamente (data URL dal backend)
-    const has = await showDataUrl();
-    if (!has){
-      // 2) se non esiste ancora, mostra form
+    const shown = (await showDataUrl()) || (await showViaMeta());
+    if (shown){
+      setStatus("Foto trovata", "ok");
+    } else {
       setStatus("Nessuna foto: scatta o carica");
       viewWrap.classList.add("hidden");
       formEl.classList.remove("hidden");
@@ -107,7 +121,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // Upload JSON: { id, mime, dataBase64 }
+  // Upload in JSON (base64); poi mostra sempre l’anteprima (dataUrl o, in fallback, viewUrl)
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -117,7 +131,6 @@
     uploadBtn.disabled = true;
 
     try{
-      // Leggi il file come dataURL e prendi la parte base64
       const base64 = await new Promise((resolve, reject)=>{
         const fr = new FileReader();
         fr.onerror = ()=>reject(new Error("reader error"));
@@ -140,10 +153,19 @@
       let j; try { j = JSON.parse(txt); } catch { j = null; }
 
       if (j && j.ok) {
-        // appena salvata: chiedi al backend la data URL e mostrala subito
-        const shown = await showDataUrl();
-        if (shown) setStatus("✅ Caricata", "ok");
-        else setStatus("✅ Caricata (anteprima in preparazione…)", "ok");
+        // prova dataUrl; se non arriva subito, usa viewUrl dal POST/Meta
+        let shown = await showDataUrl();
+        if (!shown) {
+          if (j.viewUrl){  // usa direttamente la viewUrl tornata dal backend
+            imgEl.src = j.viewUrl + `&ts=${Date.now()}`;
+            viewWrap.classList.remove("hidden");
+            formEl.classList.add("hidden");
+            shown = true;
+          } else {
+            shown = await showViaMeta();
+          }
+        }
+        setStatus("✅ Caricata", "ok");
       } else {
         setStatus("❌ " + ((j && j.error) || `Errore upload (HTTP ${res.status})`), "err");
         dbg("UPLOAD HTTP:", res.status, "BODY:", txt.slice(0,500));
