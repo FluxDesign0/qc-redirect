@@ -17,7 +17,7 @@
     .ok{color:#16a34a}
     .err{color:#ef4444}
     code{background:#0b1220;padding:2px 6px;border-radius:6px}
-    pre{white-space:pre-wrap;word-break:break-word}
+    a{color:#60a5fa}
   </style>
 </head>
 <body>
@@ -28,12 +28,13 @@
     <div id="viewWrap" class="hidden">
       <p class="muted">Foto per <code id="cid"></code>:</p>
       <img id="photo" alt="QC photo">
+      <p><a id="openLink" href="#" target="_blank" rel="noreferrer noopener" class="muted hidden">Apri immagine in nuova scheda ↗</a></p>
       <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
-      <p class="muted"><a id="openLink" href="#" target="_blank" rel="noopener">Apri immagine in nuova scheda ↗</a></p>
     </div>
 
     <form id="form" class="hidden">
-      <input type="file" id="file" accept="image/*" capture="environment" />
+      <!-- Fotocamera posteriore su mobile; nome campo = photo -->
+      <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
 
@@ -41,7 +42,9 @@
   </div>
 
 <script>
+  // ====== CONFIG ======
   const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
+  // ====================
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
@@ -50,12 +53,12 @@
   const statusEl = $("#status");
   const viewWrap = $("#viewWrap");
   const imgEl    = $("#photo");
+  const linkEl   = $("#openLink");
   const idEl     = $("#cid");
   const formEl   = $("#form");
   const fileEl   = $("#file");
   const uploadBtn= $("#uploadBtn");
   const changeBtn= $("#changeBtn");
-  const openLink = $("#openLink");
   const debugEl  = $("#debug");
   const showDebug = qs.get("debug")==="1";
 
@@ -69,11 +72,6 @@
     debugEl.classList.remove("hidden");
     debugEl.textContent += lines.join("\n") + "\n";
   }
-  function showImage(url) {
-    const prox = `${PROXY_URL}?img=${encodeURIComponent(url)}&ts=${Date.now()}`;
-    imgEl.src = prox;
-    openLink.href = url; // link diretto (utile se vuoi aprirla a parte)
-  }
 
   (async function init(){
     if(!id){
@@ -82,7 +80,7 @@
     }
     idEl.textContent = id;
 
-    // META via Worker
+    // META via Worker: se esiste, mostra direttamente la foto (passo dal proxy img per evitare blocchi)
     const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
     dbg("META →", metaUrl);
 
@@ -92,12 +90,15 @@
       let meta;
       try { meta = JSON.parse(text); } catch {
         setStatus("Errore di connessione", "err");
-        dbg("META HTTP:", r.status, "CT:", r.headers.get("Content-Type"), "\nBODY:\n", text.slice(0,800));
+        dbg("META HTTP:", r.status, "CT:", r.headers.get("content-type") || "", "\nBODY:\n", text.slice(0,500));
         return;
       }
 
       if(meta.ok && meta.exists && meta.viewUrl){
-        showImage(meta.viewUrl);
+        const proxied = `${PROXY_URL}?img=${encodeURIComponent(meta.viewUrl)}`;
+        imgEl.src = proxied;
+        linkEl.href = meta.viewUrl;
+        linkEl.classList.remove("hidden");
         setStatus("Foto trovata", "ok");
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
@@ -118,7 +119,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // ---- UPLOAD: FormData (campo "photo") ----
+  // ===== Upload in MULTIPART: FormData { id, photo }
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -128,26 +129,28 @@
     uploadBtn.disabled = true;
 
     try{
-      const uploadUrl = `${PROXY_URL}?id=${encodeURIComponent(id)}`;
-      dbg("UPLOAD →", uploadUrl);
-
       const fd = new FormData();
-      fd.append("id", id);
-      fd.append("photo", f, "photo.jpg");
+      fd.append("id", id);               // parametro id
+      fd.append("photo", f, "photo.jpg"); // CAMPO photo
+
+      const uploadUrl = PROXY_URL;       // POST diretto al Worker (niente query)
+      dbg("UPLOAD →", uploadUrl);
 
       const res = await fetch(uploadUrl, { method: "POST", body: fd });
       const txt = await res.text();
-      dbg("UPLOAD HTTP:", res.status, "\nCT:", res.headers.get("Content-Type"), "\nBODY:\n", txt.slice(0,800));
-
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
       if(json && json.ok && json.viewUrl){
-        showImage(json.viewUrl);
+        const proxied = `${PROXY_URL}?img=${encodeURIComponent(json.viewUrl)}&ts=${Date.now()}`;
+        imgEl.src = proxied;
+        linkEl.href = json.viewUrl;
+        linkEl.classList.remove("hidden");
         setStatus("✅ Caricata", "ok");
         formEl.classList.add("hidden");
         viewWrap.classList.remove("hidden");
       }else{
         setStatus("❌ " + ((json && json.error) || "Errore upload"), "err");
+        dbg("UPLOAD HTTP:", res.status, "CT:", res.headers.get("content-type") || "", "\nBODY:\n", txt.slice(0,1000));
       }
     }catch(e){
       setStatus("❌ Errore di rete", "err");
