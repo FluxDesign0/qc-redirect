@@ -5,44 +5,42 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>QC Photo</title>
   <style>
-    :root{color-scheme:dark light}
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:16px;background:#0b0f14;color:#e5e7eb}
-    .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #1f2937;border-radius:12px;background:#0f1620}
-    h1{margin:0 0 12px;font-size:20px}
-    .muted{color:#9aa4af;font-size:13px;white-space:pre-wrap;word-break:break-word}
-    img{max-width:100%;height:auto;border:1px solid #1f2937;border-radius:8px;display:block;background:#000}
-    button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
+    :root{color-scheme:light dark}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:16px}
+    .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #e5e7eb;border-radius:12px}
+    h1{margin:0 0 12px;font-size:18px}
+    .muted{opacity:.85;font-size:13px;white-space:pre-wrap;word-break:break-word}
+    img{max-width:100%;height:auto;border:1px solid #e5e7eb;border-radius:8px;background:#000}
+    button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff}
     input[type=file]{display:block;margin:12px 0}
     .hidden{display:none}
+    code{font-family:ui-monospace,Menlo,Consolas,monospace}
     .ok{color:#16a34a}
     .err{color:#ef4444}
-    code{background:#0b1220;padding:2px 6px;border-radius:6px}
+    #debug{font-size:12px;margin-top:12px;padding:8px;border:1px dashed #888;border-radius:8px;white-space:pre-wrap}
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>QC Photo</h1>
-    <div id="status" class="muted">Inizializzo…</div>
+<div class="card">
+  <h1>QC Photo</h1>
+  <div id="status" class="muted">Inizializzo…</div>
 
-    <div id="viewWrap" class="hidden">
-      <p class="muted">Foto per <code id="cid"></code>:</p>
-      <img id="photo" alt="QC photo">
-      <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
-    </div>
-
-    <form id="form" class="hidden">
-      <!-- Suggerisce la fotocamera posteriore su mobile -->
-      <input type="file" id="file" accept="image/*" capture="environment" />
-      <p><button id="uploadBtn" type="submit">Carica</button></p>
-    </form>
-
-    <pre id="debug" class="muted hidden"></pre>
+  <div id="viewWrap" class="hidden">
+    <p class="muted">Foto per <code id="cid"></code>:</p>
+    <img id="photo" alt="QC photo">
+    <p><button id="changeBtn">Carica/aggiorna foto</button></p>
   </div>
 
+  <form id="form" class="hidden">
+    <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
+    <p><button id="uploadBtn" type="submit">Carica</button></p>
+  </form>
+
+  <pre id="debug" class="hidden"></pre>
+</div>
+
 <script>
-  // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker
-  // ====================
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
@@ -69,6 +67,57 @@
     debugEl.classList.remove("hidden");
     debugEl.textContent += lines.join("\n") + "\n";
   }
+  function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+  async function fetchJSON(url, init) {
+    const r = await fetch(url, init);
+    const t = await r.text();
+    try { return { ok:true, status:r.status, json: JSON.parse(t), raw:t }; }
+    catch { return { ok:false, status:r.status, raw:t }; }
+  }
+
+  async function loadImageWithRetry(url, retries = 3) {
+    for (let i=0; i<=retries; i++){
+      const src = url + (url.includes("?") ? "&" : "?") + "ts=" + Date.now();
+      dbg("IMG try", i+1, "→", src);
+      const ok = await new Promise(resolve=>{
+        const img = new Image();
+        img.onload  = ()=>resolve(true);
+        img.onerror = ()=>resolve(false);
+        img.src = src;
+      });
+      if (ok) {
+        imgEl.src = src;
+        setStatus("Caricata", "ok");
+        viewWrap.classList.remove("hidden");
+        formEl.classList.add("hidden");
+        return true;
+      }
+      await wait(350);
+    }
+    setStatus("Immagine non ancora disponibile, riprova", "err");
+    return false;
+  }
+
+  async function refreshPreview(retries = 2) {
+    const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
+    dbg("META →", metaUrl);
+    const res = await fetchJSON(metaUrl, { cache:"no-store" });
+    if (!res.ok || !res.json || !res.json.ok) {
+      setStatus("Errore di connessione", "err");
+      dbg("HTTP:", res.status, "BODY:", (res.raw||"").slice(0,500));
+      return false;
+    }
+    const meta = res.json;
+    if (meta.exists && meta.viewUrl) {
+      return await loadImageWithRetry(meta.viewUrl, retries);
+    } else {
+      setStatus("Nessuna foto: scatta o carica");
+      viewWrap.classList.add("hidden");
+      formEl.classList.remove("hidden");
+      return false;
+    }
+  }
 
   (async function init(){
     if(!id){
@@ -76,35 +125,7 @@
       return;
     }
     idEl.textContent = id;
-
-    // META via Worker: se esiste, mostra direttamente la foto
-    const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
-    dbg("META →", metaUrl);
-
-    try{
-      const r = await fetch(metaUrl, { cache:"no-store" });
-      const text = await r.text();
-      let meta;
-      try { meta = JSON.parse(text); } catch {
-        setStatus("Errore di connessione", "err");
-        dbg("HTTP:", r.status, "BODY:", text.slice(0,500));
-        return;
-      }
-
-      if(meta.ok && meta.exists && meta.viewUrl){
-        imgEl.src = meta.viewUrl;
-        setStatus("Foto trovata", "ok");
-        viewWrap.classList.remove("hidden");
-        formEl.classList.add("hidden");
-      }else{
-        setStatus("Nessuna foto: scatta o carica");
-        viewWrap.classList.add("hidden");
-        formEl.classList.remove("hidden");
-      }
-    }catch(e){
-      setStatus("Errore di rete", "err");
-      dbg("EX META:", String(e));
-    }
+    await refreshPreview(1);
   })();
 
   changeBtn?.addEventListener("click", ()=>{
@@ -113,7 +134,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // UPLOAD in modalità RAW (no FormData): body = file, ID in querystring
+  // Upload RAW (body=file), ID in query
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -124,24 +145,21 @@
 
     try{
       const uploadUrl = `${PROXY_URL}?id=${encodeURIComponent(id)}`;
-      dbg("UPLOAD →", uploadUrl);
+      dbg("UPLOAD →", uploadUrl, "type:", f.type);
 
       const res = await fetch(uploadUrl, {
         method: "POST",
         headers: { "Content-Type": f.type || "application/octet-stream" },
         body: f
       });
-
       const txt = await res.text();
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
-      if(json && json.ok && json.viewUrl){
-        imgEl.src = json.viewUrl + `&ts=${Date.now()}`; // anti-cache
-        setStatus("✅ Caricata", "ok");
-        formEl.classList.add("hidden");
-        viewWrap.classList.remove("hidden");
+      if(json && json.ok){
+        await wait(300);
+        await refreshPreview(3);
       }else{
-        setStatus("❌ " + ((json && json.error) || "Errore upload"), "err");
+        setStatus("❌ " + ((json && json.error) || `Errore upload (HTTP ${res.status})`), "err");
         dbg("UPLOAD HTTP:", res.status, "BODY:", txt.slice(0,500));
       }
     }catch(e){
