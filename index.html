@@ -33,7 +33,7 @@
     </div>
 
     <form id="form" class="hidden">
-      <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
+      <input type="file" id="file" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
 
@@ -130,7 +130,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // ⬇️ Upload MULTIPART con FormData (campo 'id' + campo 'photo')
+  // ⬇️ Upload JSON: { id, mime, dataBase64 }
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -140,11 +140,26 @@
     uploadBtn.disabled = true;
 
     try{
-      const fd = new FormData();
-      fd.append("id", id);
-      fd.append("photo", f, "photo.jpg");   // <-- NOME CAMPO 'photo' (richiesto dal backend)
+      // Leggi il file in base64
+      const b64 = await new Promise((resolve, reject)=>{
+        const fr = new FileReader();
+        fr.onerror = ()=>reject(new Error("reader error"));
+        fr.onload  = ()=> {
+          const dataUrl = String(fr.result); // "data:<mime>;base64,AAAA..."
+          const comma = dataUrl.indexOf(',');
+          resolve(comma>=0 ? dataUrl.slice(comma+1) : '');
+        };
+        fr.readAsDataURL(f);
+      });
 
-      const res = await fetch(PROXY_URL, { method:"POST", body: fd }); // niente Content-Type manuale
+      const payload = { id, mime: f.type || "image/jpeg", data: b64 };
+
+      const res = await fetch(PROXY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
       const txt = await res.text();
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
