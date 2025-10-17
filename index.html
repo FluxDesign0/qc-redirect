@@ -1,144 +1,115 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>QC Photo</title>
+  <meta charset="UTF-8">
+  <title>Upload Foto con ID</title>
   <style>
-    :root { color-scheme: light dark; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; padding:16px; }
-    .card { max-width:560px; margin:0 auto; padding:16px;
-            border:1px solid #e5e7eb; border-radius:12px; }
-    h1 { margin:0 0 12px; font-size:18px; }
-    .muted { opacity:.8; font-size:13px; white-space:pre-wrap; word-break:break-word; }
-    img { max-width:100%; height:auto; border:1px solid #e5e7eb; border-radius:8px; }
-    button { padding:10px 14px; border:0; border-radius:8px; background:#2563eb; color:#fff; }
-    input[type=file] { display:block; margin:12px 0; }
-    .hidden { display:none; }
-    code { font-family: ui-monospace, Menlo, Consolas, monospace; }
-    .ok { color:#16a34a; }
-    .err { color:#ef4444; }
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    img { max-width: 300px; display: block; margin-top: 10px; }
+    #status { margin-top: 10px; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>QC Photo</h1>
-    <div id="status" class="muted">Inizializzo…</div>
-
-    <div id="viewWrap" class="hidden">
-      <p class="muted">Foto per <code id="cid"></code>:</p>
-      <img id="photo" alt="QC photo">
-      <p><button id="changeBtn">Carica/aggiorna foto</button></p>
-    </div>
-
-    <form id="form" class="hidden">
-      <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
-      <p><button type="submit">Carica</button></p>
-    </form>
+  <h1>Caricamento Foto</h1>
+  <div>ID: <span id="idDisplay"></span></div>
+  <div id="status">Caricamento stato...</div>
+  <div>
+    <img id="photoPreview" src="" alt="Nessuna foto caricata" style="display:none;">
+  </div>
+  <div>
+    <input type="file" id="fileInput" accept="image/*" capture="environment">
+    <button id="uploadBtn" disabled>Carica Foto</button>
   </div>
 
   <script>
-    // ====== CONFIG: Indirizzo del proxy (Cloudflare Worker o simili) ======
-    const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
+    (function() {
+      // URL del proxy Cloudflare (modificare con il vostro URL)
+      const PROXY_URL = "https://IL_TUO_WORKER.workers.dev";
+      // Estrae ID da ?id=... nella querystring
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get('id');
+      const idDisplay = document.getElementById('idDisplay');
+      const statusDiv = document.getElementById('status');
+      const imgPreview = document.getElementById('photoPreview');
+      const fileInput = document.getElementById('fileInput');
+      const uploadBtn = document.getElementById('uploadBtn');
 
-    const qs = new URLSearchParams(location.search);
-    const id = qs.get("id");
-
-    const $ = s => document.querySelector(s);
-    const statusEl = $("#status");
-    const viewWrap = $("#viewWrap");
-    const imgEl = $("#photo");
-    const idEl = $("#cid");
-    const formEl = $("#form");
-    const fileEl = $("#file");
-    const changeBtn = $("#changeBtn");
-
-    function showError(title, extra="") {
-      statusEl.innerHTML =
-        `<span class="err">❌ ${title}</span>` + (extra ? `\n${extra}` : "");
-    }
-
-    (async function init(){
+      // Controlla la presenza di ID
       if (!id) {
-        showError("ID mancante", "Specifica un parametro ?id=QC-XXXX");
+        statusDiv.textContent = "Errore: parametro ID mancante nell'URL.";
         return;
       }
-      idEl.textContent = id;
+      idDisplay.textContent = id;
 
-      // Chiamata META tramite Worker
-      const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
-      try {
-        const r = await fetch(metaUrl, { cache: "no-store" });
-        const text = await r.text();
-        let meta;
-        try {
-          meta = JSON.parse(text);
-        } catch {
-          return showError("Errore di connessione",
-            `URL visto: ${location.href}\nID rilevato: ${id}\nChiamata META → ${metaUrl}\nHTTP status: ${r.status}\nRisposta: ${text.slice(0,500)}`);
+      // Funzione per gestire risposta JSON/errore
+      async function handleResponse(response) {
+        if (!response.ok) {
+          let text = await response.text();
+          throw new Error(`HTTP ${response.status}: ${text}`);
         }
-
-        if (meta.ok && meta.exists && meta.viewUrl) {
-          imgEl.src = meta.viewUrl;
-          statusEl.innerHTML = `<span class="ok">Foto trovata</span>`;
-          viewWrap.classList.remove("hidden");
-          formEl.classList.add("hidden");
-        } else {
-          statusEl.textContent = "Nessuna foto: scatta o carica";
-          viewWrap.classList.add("hidden");
-          formEl.classList.remove("hidden");
-        }
-      } catch (e) {
-        showError("Errore di connessione",
-          `URL visto: ${location.href}\nID rilevato: ${id}\nChiamata META → ${metaUrl}\nJS Error: ${String(e)}`);
+        return response.json();
       }
+
+      // Richiede lo stato della foto (GET ?action=meta&id=...)
+      async function checkMeta() {
+        try {
+          const url = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
+          const response = await fetch(url, { method: 'GET' });
+          const data = await handleResponse(response);
+          // Assumiamo che data abbia { exists: boolean, url?: string }
+          if (data.exists) {
+            statusDiv.textContent = "Foto trovata. Visualizzo anteprima.";
+            if (data.url) {
+              imgPreview.src = data.url;
+              imgPreview.style.display = "block";
+            } else {
+              statusDiv.textContent += " (URL immagine mancante)";
+            }
+          } else {
+            statusDiv.textContent = "Nessuna foto esistente per questo ID. Carica una nuova foto.";
+          }
+        } catch (err) {
+          statusDiv.textContent = "Errore GET: " + err.message;
+        }
+      }
+
+      // Preview dell'immagine selezionata
+      fileInput.addEventListener('change', function() {
+        const file = fileInput.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = e => {
+            imgPreview.src = e.target.result;
+            imgPreview.style.display = "block";
+          };
+          reader.readAsDataURL(file);
+          uploadBtn.disabled = false;
+        }
+      });
+
+      // Upload della foto selezionata (POST form-data)
+      uploadBtn.addEventListener('click', async function() {
+        const file = fileInput.files[0];
+        if (!file) {
+          alert("Seleziona un file prima di caricare.");
+          return;
+        }
+        statusDiv.textContent = "Caricamento in corso...";
+        try {
+          const formData = new FormData();
+          formData.append('id', id);
+          formData.append('photo', file, file.name);
+          const response = await fetch(PROXY_URL, { method: 'POST', body: formData });
+          const data = await handleResponse(response);
+          statusDiv.textContent = "Upload completato: " + JSON.stringify(data);
+        } catch (err) {
+          statusDiv.textContent = "Errore POST: " + err.message;
+        }
+      });
+
+      // Avvia controllo all'avvio
+      checkMeta();
     })();
-
-    changeBtn?.addEventListener("click", () => {
-      viewWrap.classList.add("hidden");
-      formEl.classList.remove("hidden");
-    });
-
-    formEl.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      const f = fileEl.files[0];
-      if (!f) {
-        alert("Seleziona una foto");
-        return;
-      }
-      statusEl.textContent = "Caricamento…";
-
-      // Caricamento tramite POST (FormData)
-      try {
-        const fd = new FormData();
-        fd.append("id", id);
-        fd.append("photo", f, "photo.jpg");
-
-        const res = await fetch(PROXY_URL, { method: "POST", body: fd });
-        const txt = await res.text();
-        let json;
-        try {
-          json = JSON.parse(txt);
-        } catch {
-          return showError(`Upload fallito (HTTP ${res.status})`,
-            `Upload → ${PROXY_URL}\nRisposta: ${txt.slice(0,500)}`);
-        }
-
-        if (json.ok && json.viewUrl) {
-          // Ricarica l'immagine con anti-cache (timestamp)
-          imgEl.src = json.viewUrl + `&ts=${Date.now()}`;
-          statusEl.innerHTML = `<span class="ok">✅ Caricata</span>`;
-          formEl.classList.add("hidden");
-          viewWrap.classList.remove("hidden");
-        } else {
-          showError(json.error || "Errore upload",
-            `Upload → ${PROXY_URL}\nHTTP status: ${res.status}\nRisposta: ${txt.slice(0,500)}`);
-        }
-      } catch (e) {
-        showError("Errore di rete",
-          `Upload → ${PROXY_URL}\nJS Error: ${String(e)}`);
-      }
-    });
   </script>
 </body>
 </html>
