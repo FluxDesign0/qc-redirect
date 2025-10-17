@@ -41,7 +41,7 @@
 
 <script>
   // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker con CORS
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -113,7 +113,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // UPLOAD in modalità RAW (no FormData): body = file, ID in querystring
+  // ========= UPLOAD SICURO: multipart/form-data (FormData) =========
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -124,12 +124,15 @@
 
     try{
       const uploadUrl = `${PROXY_URL}?id=${encodeURIComponent(id)}`;
-      dbg("UPLOAD →", uploadUrl);
+      dbg("UPLOAD →", uploadUrl, "file:", f.name, "type:", f.type);
+
+      // IMPORTANTISSIMO: usare FormData e NON impostare Content-Type a mano
+      const fd = new FormData();
+      fd.append("photo", f, f.name); // "photo" corrisponde a e.files.photo nel backend GAS
 
       const res = await fetch(uploadUrl, {
         method: "POST",
-        headers: { "Content-Type": f.type || "application/octet-stream" },
-        body: f
+        body: fd
       });
 
       const txt = await res.text();
