@@ -31,6 +31,7 @@
     </div>
 
     <form id="form" class="hidden">
+      <!-- Suggerisce la fotocamera posteriore su mobile -->
       <input type="file" id="file" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
@@ -40,11 +41,12 @@
 
 <script>
   // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // <— tuo Worker
   // ====================
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
+  const showDebug = qs.get("debug")==="1" || qs.get("d")==="1";
 
   const $ = s => document.querySelector(s);
   const statusEl = $("#status");
@@ -56,7 +58,6 @@
   const uploadBtn= $("#uploadBtn");
   const changeBtn= $("#changeBtn");
   const debugEl  = $("#debug");
-  const showDebug = qs.get("debug")==="1" || true; // tienilo vero finché testiamo
 
   function setStatus(msg, cls) {
     statusEl.textContent = msg;
@@ -70,21 +71,30 @@
   }
 
   (async function init(){
-    if(!id){ setStatus("❌ ID mancante (usa ?id=QC-0001)", "err"); return; }
+    if(!id){
+      setStatus("❌ ID mancante (usa ?id=QC-0001)", "err");
+      return;
+    }
     idEl.textContent = id;
 
+    // META via Worker
     const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
     dbg("META →", metaUrl);
 
     try{
       const r = await fetch(metaUrl, { cache:"no-store" });
-      const ct = r.headers.get("content-type") || "";
+      const ct = r.headers.get("Content-Type") || "";
       const text = await r.text();
-      dbg("META HTTP:", r.status, "\nCT:", ct, "\nBODY:\n", text.slice(0,500));
+      dbg("META HTTP:", r.status, "\nCT:", ct, "\nBODY:\n", text.slice(0,400));
 
-      let meta; try { meta = JSON.parse(text); } catch { meta = null; }
-      if(meta && meta.ok && meta.exists && meta.viewUrl){
-        imgEl.src = meta.viewUrl;
+      let meta;
+      try { meta = JSON.parse(text); } catch {
+        setStatus("Errore di connessione", "err");
+        return;
+      }
+
+      if(meta.ok && meta.exists && meta.viewUrl){
+        imgEl.src = meta.viewUrl + `&ts=${Date.now()}`;
         setStatus("Foto trovata", "ok");
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
@@ -105,7 +115,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // Upload in MULTIPART (FormData): Apps Script leggerà e.files.photo
+  // === UPLOAD in modalità RAW (body = file, id nella query) ===
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -115,17 +125,18 @@
     uploadBtn.disabled = true;
 
     try{
-      const fd = new FormData();
-      fd.append("id", id);
-      fd.append("photo", f, "photo.jpg");
-
-      const uploadUrl = PROXY_URL; // POST diretto (id è nel form-data)
+      const uploadUrl = `${PROXY_URL}?id=${encodeURIComponent(id)}`;
       dbg("UPLOAD →", uploadUrl);
 
-      const res = await fetch(uploadUrl, { method: "POST", body: fd });
-      const ct  = res.headers.get("content-type") || "";
+      const res = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": f.type || "application/octet-stream" },
+        body: f
+      });
+
+      const ct = res.headers.get("Content-Type") || "";
       const txt = await res.text();
-      dbg("UPLOAD HTTP:", res.status, "\nCT:", ct, "\nBODY:\n", txt.slice(0,500));
+      dbg("UPLOAD HTTP:", res.status, "\nCT:", ct, "\nBODY:\n", txt.slice(0,400));
 
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
