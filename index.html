@@ -17,6 +17,7 @@
     .ok{color:#16a34a}
     .err{color:#ef4444}
     code{background:#0b1220;padding:2px 6px;border-radius:6px}
+    .tools{display:flex;gap:8px;align-items:center}
   </style>
 </head>
 <body>
@@ -27,6 +28,9 @@
     <div id="viewWrap" class="hidden">
       <p class="muted">Foto per <code id="cid"></code>:</p>
       <img id="photo" alt="QC photo">
+      <div class="tools">
+        <a id="openLink" class="muted hidden" target="_blank" rel="noopener">Apri immagine in nuova scheda ↗</a>
+      </div>
       <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
     </div>
 
@@ -39,8 +43,9 @@
   </div>
 
 <script>
-  // Tuo Worker Cloudflare
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
+  // ====== CONFIG ======
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker
+  // ====================
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
@@ -49,6 +54,7 @@
   const statusEl = $("#status");
   const viewWrap = $("#viewWrap");
   const imgEl    = $("#photo");
+  const openLink = $("#openLink");
   const idEl     = $("#cid");
   const formEl   = $("#form");
   const fileEl   = $("#file");
@@ -67,7 +73,6 @@
     debugEl.classList.remove("hidden");
     debugEl.textContent += lines.join("\n") + "\n";
   }
-
   async function getJSON(url, init){
     const r = await fetch(url, init);
     const t = await r.text();
@@ -75,27 +80,39 @@
     catch { return { ok:false, status:r.status, raw:t }; }
   }
 
-  // 1) tenta anteprima immediata (data URL)
-  async function showDataUrl(){
+  // imposta <img> con onload/onerror e link di test
+  function setImageSrc(url){
+    const withTs = url + (url.includes("?") ? "&" : "?") + "ts=" + Date.now();
+    imgEl.onload = ()=>{ setStatus("Caricata", "ok"); };
+    imgEl.onerror = ()=> {
+      // non carica: mostra link di test
+      openLink.href = withTs;
+      openLink.classList.remove("hidden");
+      setStatus("Immagine non ancora disponibile, ritenta o apri il link", "err");
+      dbg("IMG onerror src:", withTs);
+    };
+    openLink.href = withTs;
+    openLink.classList.remove("hidden");
+    imgEl.src = withTs;
+    dbg("IMG src →", withTs);
+  }
+
+  // 1) dataUrl
+  async function tryDataUrl(){
     const url = `${PROXY_URL}?action=img&id=${encodeURIComponent(id)}`;
     const res = await getJSON(url, { cache:'no-store' });
     if (res.ok && res.json && res.json.ok && res.json.dataUrl){
-      imgEl.src = res.json.dataUrl;
-      viewWrap.classList.remove("hidden");
-      formEl.classList.add("hidden");
+      setImageSrc(res.json.dataUrl);
       return true;
     }
     return false;
   }
-
-  // 2) fallback: meta → viewUrl Drive
-  async function showViaMeta(){
+  // 2) meta → viewUrl
+  async function tryMeta(){
     const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
     const res = await getJSON(metaUrl, { cache:"no-store" });
     if (res.ok && res.json && res.json.ok && res.json.exists && res.json.viewUrl){
-      imgEl.src = res.json.viewUrl + `&ts=${Date.now()}`;
-      viewWrap.classList.remove("hidden");
-      formEl.classList.add("hidden");
+      setImageSrc(res.json.viewUrl);
       return true;
     }
     return false;
@@ -104,10 +121,12 @@
   async function init(){
     if(!id){ setStatus("❌ ID mancante (usa ?id=QC-0001)", "err"); return; }
     idEl.textContent = id;
+    openLink.classList.add("hidden");
 
-    const shown = (await showDataUrl()) || (await showViaMeta());
+    const shown = (await tryDataUrl()) || (await tryMeta());
     if (shown){
-      setStatus("Foto trovata", "ok");
+      viewWrap.classList.remove("hidden");
+      formEl.classList.add("hidden");
     } else {
       setStatus("Nessuna foto: scatta o carica");
       viewWrap.classList.add("hidden");
@@ -119,16 +138,17 @@
     viewWrap.classList.add("hidden");
     formEl.classList.remove("hidden");
     setStatus("Seleziona/scatta una foto");
+    openLink.classList.add("hidden");
   });
 
-  // Upload in JSON (base64); poi mostra sempre l’anteprima (dataUrl o, in fallback, viewUrl)
+  // Upload in JSON (base64) + fallback visualizzazione
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
     if(!f){ alert("Seleziona o scatta una foto"); return; }
-
     setStatus("Caricamento…");
     uploadBtn.disabled = true;
+    openLink.classList.add("hidden");
 
     try{
       const base64 = await new Promise((resolve, reject)=>{
@@ -143,32 +163,34 @@
       });
 
       const payload = { id, mime: f.type || "image/jpeg", data: base64 };
-      const res = await fetch(PROXY_URL, {
+      const r = await fetch(PROXY_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-
-      const txt = await res.text();
+      const txt = await r.text();
       let j; try { j = JSON.parse(txt); } catch { j = null; }
 
-      if (j && j.ok) {
-        // prova dataUrl; se non arriva subito, usa viewUrl dal POST/Meta
-        let shown = await showDataUrl();
-        if (!shown) {
-          if (j.viewUrl){  // usa direttamente la viewUrl tornata dal backend
-            imgEl.src = j.viewUrl + `&ts=${Date.now()}`;
-            viewWrap.classList.remove("hidden");
-            formEl.classList.add("hidden");
-            shown = true;
-          } else {
-            shown = await showViaMeta();
-          }
+      if (j && j.ok){
+        // prova dataUrl subito; se no usa viewUrl del POST o meta
+        let shown = await tryDataUrl();
+        if (!shown && j.viewUrl){
+          setImageSrc(j.viewUrl);
+          shown = true;
         }
-        setStatus("✅ Caricata", "ok");
+        if (!shown){
+          shown = await tryMeta();
+        }
+        if (shown){
+          viewWrap.classList.remove("hidden");
+          formEl.classList.add("hidden");
+          setStatus("✅ Caricata", "ok");
+        } else {
+          setStatus("Caricata ma l’anteprima non è ancora pronta, apri il link qui sotto o riprova", "err");
+        }
       } else {
-        setStatus("❌ " + ((j && j.error) || `Errore upload (HTTP ${res.status})`), "err");
-        dbg("UPLOAD HTTP:", res.status, "BODY:", txt.slice(0,500));
+        setStatus("❌ " + ((j && j.error) || `Errore upload (HTTP ${r.status})`), "err");
+        dbg("UPLOAD HTTP:", r.status, "BODY:", txt.slice(0,500));
       }
     }catch(e){
       setStatus("❌ Errore di rete", "err");
