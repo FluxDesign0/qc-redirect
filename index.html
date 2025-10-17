@@ -41,8 +41,7 @@
 
 <script>
   // ====== CONFIG ======
-  // Usa il tuo Worker Cloudflare (proxy verso Apps Script)
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -114,8 +113,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // NIENTE anteprima alla selezione: la mostriamo SOLO dopo upload riuscito
-
+  // Mostra l’immagine SOLO dopo upload riuscito (niente anteprima pre-upload)
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -127,15 +125,14 @@
     try{
       const fd = new FormData();
       fd.append("id", id);
-      fd.append("photo", f, "photo.jpg"); // nome chiave ESATTA: photo
+      fd.append("photo", f, "photo.jpg"); // il backend si aspetta "photo"
 
       const res = await fetch(PROXY_URL, { method:"POST", body: fd });
       const txt = await res.text();
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
       if(json && json.ok && json.viewUrl){
-        // Mostra SOLO ora l’immagine caricata (anti-cache con ts)
-        imgEl.src = json.viewUrl + `&ts=${Date.now()}`;
+        imgEl.src = json.viewUrl + `&ts=${Date.now()}`; // anti-cache
         setStatus("✅ Caricata", "ok");
         formEl.classList.add("hidden");
         viewWrap.classList.remove("hidden");
