@@ -17,7 +17,6 @@
     .ok{color:#16a34a}
     .err{color:#ef4444}
     code{background:#0b1220;padding:2px 6px;border-radius:6px}
-    .muted.small{font-size:12px;opacity:.7}
   </style>
 </head>
 <body>
@@ -29,7 +28,6 @@
       <p class="muted">Foto per <code id="cid"></code>:</p>
       <img id="photo" alt="QC photo">
       <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
-      <p id="hint" class="muted small hidden">Se l’immagine non appare subito, riprova tra un attimo: Drive sta preparando l’anteprima…</p>
     </div>
 
     <form id="form" class="hidden">
@@ -55,12 +53,10 @@
   const fileEl   = $("#file");
   const uploadBtn= $("#uploadBtn");
   const changeBtn= $("#changeBtn");
-  const hintEl   = $("#hint");
   const debugEl  = $("#debug");
-  const showDebug = qs.get("debug")==="1";
-  const wait = (ms)=>new Promise(r=>setTimeout(r,ms));
+  const showDebug= qs.get("debug")==="1";
 
-  function setStatus(msg, cls) {
+  function setStatus(msg, cls){
     statusEl.textContent = msg;
     statusEl.classList.toggle("ok", cls==="ok");
     statusEl.classList.toggle("err", cls==="err");
@@ -71,58 +67,39 @@
     debugEl.textContent += lines.join("\n") + "\n";
   }
 
-  async function meta(){
-    const url = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
-    const r = await fetch(url, { cache:"no-store" });
+  async function getJSON(url, init){
+    const r = await fetch(url, init);
     const t = await r.text();
-    try { return JSON.parse(t); } catch { return { ok:false, error:`HTTP ${r.status}`, raw:t }; }
+    try { return { ok:true, status:r.status, json:JSON.parse(t)}; }
+    catch { return { ok:false, status:r.status, raw:t }; }
   }
 
-  async function showExistingIfAny(retries=0){
-    const m = await meta();
-    if (!m.ok) {
-      setStatus("Errore di connessione", "err");
-      dbg("META error:", m);
-      return false;
+  async function showDataUrl(){
+    const url = `${PROXY_URL}?action=img&id=${encodeURIComponent(id)}`;
+    const res = await getJSON(url, { cache:'no-store' });
+    if (res.ok && res.json && res.json.ok && res.json.dataUrl){
+      imgEl.src = res.json.dataUrl;
+      viewWrap.classList.remove("hidden");
+      formEl.classList.add("hidden");
+      setStatus("Foto trovata", "ok");
+      return true;
     }
-    if (m.exists && m.viewUrl) {
-      const srcTry = async ()=>{
-        return await new Promise(res=>{
-          const img = new Image();
-          img.onload = ()=>res(true);
-          img.onerror= ()=>res(false);
-          img.src = m.viewUrl + `&ts=${Date.now()}`;
-        });
-      };
-      let ok = await srcTry();
-      if (!ok && retries>0) {
-        hintEl.classList.remove("hidden");
-        for (let i=0;i<retries;i++){
-          await wait(400 + i*200);
-          ok = await srcTry();
-          if (ok) break;
-        }
-      }
-      if (ok) {
-        imgEl.src = m.viewUrl + `&ts=${Date.now()}`;
-        setStatus("Foto trovata", "ok");
-        viewWrap.classList.remove("hidden");
-        formEl.classList.add("hidden");
-        hintEl.classList.add("hidden");
-        return true;
-      }
-    }
-    setStatus("Nessuna foto: scatta o carica");
-    viewWrap.classList.add("hidden");
-    formEl.classList.remove("hidden");
     return false;
   }
 
-  (async function init(){
+  async function init(){
     if(!id){ setStatus("❌ ID mancante (usa ?id=QC-0001)", "err"); return; }
     idEl.textContent = id;
-    await showExistingIfAny(2);
-  })();
+
+    // 1) prova a mostrare direttamente (data URL dal backend)
+    const has = await showDataUrl();
+    if (!has){
+      // 2) se non esiste ancora, mostra form
+      setStatus("Nessuna foto: scatta o carica");
+      viewWrap.classList.add("hidden");
+      formEl.classList.remove("hidden");
+    }
+  }
 
   changeBtn?.addEventListener("click", ()=>{
     viewWrap.classList.add("hidden");
@@ -130,7 +107,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // ⬇️ Upload JSON: { id, mime, dataBase64 }
+  // Upload JSON: { id, mime, dataBase64 }
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -140,20 +117,19 @@
     uploadBtn.disabled = true;
 
     try{
-      // Leggi il file in base64
-      const b64 = await new Promise((resolve, reject)=>{
+      // Leggi il file come dataURL e prendi la parte base64
+      const base64 = await new Promise((resolve, reject)=>{
         const fr = new FileReader();
         fr.onerror = ()=>reject(new Error("reader error"));
         fr.onload  = ()=> {
-          const dataUrl = String(fr.result); // "data:<mime>;base64,AAAA..."
-          const comma = dataUrl.indexOf(',');
-          resolve(comma>=0 ? dataUrl.slice(comma+1) : '');
+          const s = String(fr.result);
+          const i = s.indexOf(',');
+          resolve(i>=0 ? s.slice(i+1) : '');
         };
         fr.readAsDataURL(f);
       });
 
-      const payload = { id, mime: f.type || "image/jpeg", data: b64 };
-
+      const payload = { id, mime: f.type || "image/jpeg", data: base64 };
       const res = await fetch(PROXY_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -161,14 +137,15 @@
       });
 
       const txt = await res.text();
-      let json; try { json = JSON.parse(txt); } catch { json = null; }
+      let j; try { j = JSON.parse(txt); } catch { j = null; }
 
-      if(json && json.ok && json.viewUrl){
-        await wait(350);
-        await showExistingIfAny(2);
-        setStatus("✅ Caricata", "ok");
-      }else{
-        setStatus("❌ " + ((json && json.error) || `Errore upload (HTTP ${res.status})`), "err");
+      if (j && j.ok) {
+        // appena salvata: chiedi al backend la data URL e mostrala subito
+        const shown = await showDataUrl();
+        if (shown) setStatus("✅ Caricata", "ok");
+        else setStatus("✅ Caricata (anteprima in preparazione…)", "ok");
+      } else {
+        setStatus("❌ " + ((j && j.error) || `Errore upload (HTTP ${res.status})`), "err");
         dbg("UPLOAD HTTP:", res.status, "BODY:", txt.slice(0,500));
       }
     }catch(e){
@@ -178,6 +155,8 @@
       uploadBtn.disabled = false;
     }
   });
+
+  init();
 </script>
 </body>
 </html>
