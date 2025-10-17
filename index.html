@@ -33,8 +33,7 @@
     </div>
 
     <form id="form" class="hidden">
-      <!-- Suggerisce la fotocamera posteriore su mobile -->
-      <input type="file" id="file" accept="image/*" capture="environment" />
+      <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
       <p><button id="uploadBtn" type="submit">Carica</button></p>
     </form>
 
@@ -42,9 +41,7 @@
   </div>
 
 <script>
-  // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker
-  // ====================
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker
 
   const qs = new URLSearchParams(location.search);
   const id = qs.get("id");
@@ -61,6 +58,7 @@
   const hintEl   = $("#hint");
   const debugEl  = $("#debug");
   const showDebug = qs.get("debug")==="1";
+  const wait = (ms)=>new Promise(r=>setTimeout(r,ms));
 
   function setStatus(msg, cls) {
     statusEl.textContent = msg;
@@ -72,9 +70,8 @@
     debugEl.classList.remove("hidden");
     debugEl.textContent += lines.join("\n") + "\n";
   }
-  const wait = (ms)=> new Promise(r=>setTimeout(r,ms));
 
-  async function loadMeta(){
+  async function meta(){
     const url = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
     const r = await fetch(url, { cache:"no-store" });
     const t = await r.text();
@@ -82,26 +79,32 @@
   }
 
   async function showExistingIfAny(retries=0){
-    const meta = await loadMeta();
-    if (!meta.ok) {
+    const m = await meta();
+    if (!m.ok) {
       setStatus("Errore di connessione", "err");
-      dbg("META error:", meta);
+      dbg("META error:", m);
       return false;
     }
-    if (meta.exists && meta.viewUrl) {
-      // piccolo retry se l'anteprima non è pronta
-      const src = meta.viewUrl + `&ts=${Date.now()}`;
-      let ok = await tryImg(src);
-      if (!ok && retries > 0) {
+    if (m.exists && m.viewUrl) {
+      const srcTry = async ()=>{
+        return await new Promise(res=>{
+          const img = new Image();
+          img.onload = ()=>res(true);
+          img.onerror= ()=>res(false);
+          img.src = m.viewUrl + `&ts=${Date.now()}`;
+        });
+      };
+      let ok = await srcTry();
+      if (!ok && retries>0) {
         hintEl.classList.remove("hidden");
         for (let i=0;i<retries;i++){
           await wait(400 + i*200);
-          ok = await tryImg(meta.viewUrl + `&ts=${Date.now()}`);
+          ok = await srcTry();
           if (ok) break;
         }
       }
       if (ok) {
-        imgEl.src = meta.viewUrl + `&ts=${Date.now()}`;
+        imgEl.src = m.viewUrl + `&ts=${Date.now()}`;
         setStatus("Foto trovata", "ok");
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
@@ -109,28 +112,14 @@
         return true;
       }
     }
-    // nessuna foto pronta
     setStatus("Nessuna foto: scatta o carica");
     viewWrap.classList.add("hidden");
     formEl.classList.remove("hidden");
     return false;
   }
 
-  function tryImg(url){
-    return new Promise(res=>{
-      const img = new Image();
-      const done = (ok)=>{ img.onload=null; img.onerror=null; res(ok); };
-      img.onload = ()=>done(true);
-      img.onerror= ()=>done(false);
-      img.src = url;
-    });
-  }
-
   (async function init(){
-    if(!id){
-      setStatus("❌ ID mancante (usa ?id=QC-0001)", "err");
-      return;
-    }
+    if(!id){ setStatus("❌ ID mancante (usa ?id=QC-0001)", "err"); return; }
     idEl.textContent = id;
     await showExistingIfAny(2);
   })();
@@ -141,7 +130,7 @@
     setStatus("Seleziona/scatta una foto");
   });
 
-  // UPLOAD RAW (body = file, ID in querystring)
+  // ⬇️ Upload MULTIPART con FormData (campo 'id' + campo 'photo')
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
@@ -151,20 +140,15 @@
     uploadBtn.disabled = true;
 
     try{
-      const uploadUrl = `${PROXY_URL}?id=${encodeURIComponent(id)}`;
-      dbg("UPLOAD →", uploadUrl, "type:", f.type);
+      const fd = new FormData();
+      fd.append("id", id);
+      fd.append("photo", f, "photo.jpg");   // <-- NOME CAMPO 'photo' (richiesto dal backend)
 
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": f.type || "application/octet-stream" },
-        body: f
-      });
-
+      const res = await fetch(PROXY_URL, { method:"POST", body: fd }); // niente Content-Type manuale
       const txt = await res.text();
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
       if(json && json.ok && json.viewUrl){
-        // subito dopo l'upload, aspetta un attimo e prova a mostrare (con 2 retry rapidi)
         await wait(350);
         await showExistingIfAny(2);
         setStatus("✅ Caricata", "ok");
