@@ -6,17 +6,17 @@
   <title>QC Photo</title>
   <style>
     :root{color-scheme:light dark}
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:16px;background:#0b0f14;color:#e5e7eb}
-    .card{max-width:640px;margin:0 auto;padding:16px;border:1px solid #1f2937;border-radius:14px;background:#0f1720}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:16px}
+    .card{max-width:560px;margin:0 auto;padding:16px;border:1px solid #e5e7eb;border-radius:12px}
     h1{margin:0 0 12px;font-size:18px}
-    .muted{color:#9ca3af;font-size:13px;white-space:pre-wrap;word-break:break-word}
-    img{max-width:100%;height:auto;border:1px solid #1f2937;border-radius:8px}
+    .muted{opacity:.8;font-size:13px;white-space:pre-wrap;word-break:break-word}
+    img{max-width:100%;height:auto;border:1px solid #e5e7eb;border-radius:8px}
     button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff}
     input[type=file]{display:block;margin:12px 0}
     .hidden{display:none}
-    code{font-family:ui-monospace,Consolas,monospace}
-    .err{color:#f87171}
-    .ok{color:#34d399}
+    code{font-family:ui-monospace,Menlo,Consolas,monospace}
+    .ok{color:#16a34a}
+    .err{color:#ef4444}
   </style>
 </head>
 <body>
@@ -24,179 +24,112 @@
   <h1>QC Photo</h1>
   <div id="status" class="muted">Inizializzo…</div>
 
-  <div id="debug" class="muted" style="margin-top:8px"></div>
-
-  <div id="viewWrap" class="hidden" style="margin-top:12px">
+  <div id="viewWrap" class="hidden">
     <p class="muted">Foto per <code id="cid"></code>:</p>
     <img id="photo" alt="QC photo">
     <p><button id="changeBtn">Carica/aggiorna foto</button></p>
   </div>
 
   <form id="form" class="hidden">
-    <input id="file" type="file" name="photo" accept="image/*" capture="environment" />
+    <input type="file" id="file" name="photo" accept="image/*" capture="environment" />
     <p><button type="submit">Carica</button></p>
   </form>
 </div>
 
 <script>
-  // ====== CONFIG ======
-  // 1) Worker (proxy) – deve puntare al tuo Cloudflare Worker
-  const BACKEND_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
-  // ====================
+  // ====== CONFIG: usa SEMPRE il Worker ======
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/";
+
+  const qs = new URLSearchParams(location.search);
+  const id = qs.get("id");
 
   const $ = s => document.querySelector(s);
   const statusEl = $("#status");
-  const debugEl  = $("#debug");
   const viewWrap = $("#viewWrap");
-  const imgEl    = $("#photo");
-  const idEl     = $("#cid");
-  const formEl   = $("#form");
-  const fileEl   = $("#file");
-  const changeBtn= $("#changeBtn");
+  const imgEl = $("#photo");
+  const idEl = $("#cid");
+  const formEl = $("#form");
+  const fileEl = $("#file");
+  const changeBtn = $("#changeBtn");
 
-  // id dal querystring (?id=QC-xxxx). Gestione robusta (fallback su hash/segmenti)
-  function getIdFromUrl() {
-    const url = new URL(location.href);
-    const sp  = new URLSearchParams(url.search);
-    let id = sp.get("id");
-
-    if (!id || !/^QC-\w+/i.test(id)) {
-      // fallback su #id=...
-      const h = new URLSearchParams(url.hash.replace(/^#/, ''));
-      id = id || h.get("id");
-    }
-    if (!id || !/^QC-\w+/i.test(id)) {
-      // fallback su ultimo segmento se tipo .../QC-XXX
-      const parts = url.pathname.split("/").filter(Boolean);
-      const last = parts[parts.length-1] || "";
-      if (/^QC-\w+/i.test(last)) id = last;
-    }
-    return id || "";
-  }
-
-  function logDebug(lines) {
-    if (!Array.isArray(lines)) lines = [String(lines)];
-    debugEl.textContent = lines.join("\n");
-  }
-
-  async function fetchJson(url, opt={}) {
-    const out = { ok:false, status:0, url, body:"", json:null, err:null };
-    try {
-      const res = await fetch(url, { mode:"cors", cache:"no-store", ...opt });
-      out.status = res.status;
-      out.body   = await res.text();
-      try { out.json = JSON.parse(out.body); } catch { /* keep as text */ }
-      out.ok = res.ok;
-    } catch (e) {
-      out.err = e;
-    }
-    return out;
+  function showError(title, extra="") {
+    statusEl.innerHTML =
+      `<span class="err">❌ ${title}</span>` + (extra ? `\n${extra}` : "");
   }
 
   (async function init(){
-    const id = getIdFromUrl();
-    const seenUrl = location.href;
-    logDebug([
-      `URL visto: ${seenUrl}`,
-      `ID rilevato: ${id || "(mancante)"}`
-    ]);
-
-    if (!id) {
-      statusEl.innerHTML = `<span class="err">❌ missing id</span>`;
+    if(!id){
+      showError("missing id");
       return;
     }
     idEl.textContent = id;
 
-    // 1) METADATA
-    const metaUrl = `${BACKEND_URL}?action=meta&id=${encodeURIComponent(id)}`;
-    const metaRes = await fetchJson(metaUrl);
+    // --- META via Worker ---
+    const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
+    try{
+      const r = await fetch(metaUrl, {cache:"no-store"});
+      const text = await r.text();
+      let meta;
+      try { meta = JSON.parse(text); } catch {
+        return showError("Errore di connessione",
+          `URL visto: ${location.href}\nID rilevato: ${id}\nChiamata META → ${metaUrl}\nHTTP status: ${r.status}\nBody: ${text.slice(0,500)}`);
+      }
 
-    if (!metaRes.ok) {
-      statusEl.innerHTML = `<span class="err">Errore di connessione</span>`;
-      logDebug([
-        `URL visto: ${seenUrl}`,
-        `ID rilevato: ${id}`,
-        ``,
-        `Chiamata META → ${metaUrl}`,
-        `HTTP status: ${metaRes.status}`,
-        `Body: ${metaRes.body || "(vuoto)"}`,
-        metaRes.err ? `JS Error: ${metaRes.err}` : ""
-      ].filter(Boolean));
-      return;
-    }
-
-    // se il backend restituisce json valido
-    if (metaRes.json && metaRes.json.ok) {
-      if (metaRes.json.exists && metaRes.json.viewUrl) {
+      if(meta.ok && meta.exists && meta.viewUrl){
+        imgEl.src = meta.viewUrl;
         statusEl.innerHTML = `<span class="ok">Foto trovata</span>`;
-        imgEl.src = metaRes.json.viewUrl;
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
-      } else {
+      }else{
         statusEl.textContent = "Nessuna foto: scatta o carica";
         viewWrap.classList.add("hidden");
         formEl.classList.remove("hidden");
       }
-    } else {
-      statusEl.innerHTML = `<span class="err">Meta non valida</span>`;
-      logDebug([
-        `URL visto: ${seenUrl}`,
-        `ID rilevato: ${id}`,
-        ``,
-        `Chiamata META → ${metaUrl}`,
-        `HTTP status: ${metaRes.status}`,
-        `Body: ${metaRes.body || "(vuoto)"}`,
-      ]);
-      return;
+    }catch(e){
+      showError("Errore di connessione",
+        `URL visto: ${location.href}\nID rilevato: ${id}\nChiamata META → ${metaUrl}\nHTTP status: 0\nJS Error: ${e}`);
     }
+  })();
 
-    // Handler “cambia foto”
-    changeBtn?.addEventListener("click", ()=>{
-      viewWrap.classList.add("hidden");
-      formEl.classList.remove("hidden");
-    });
+  changeBtn?.addEventListener("click", ()=>{
+    viewWrap.classList.add("hidden");
+    formEl.classList.remove("hidden");
+  });
 
-    // 2) UPLOAD
-    formEl.addEventListener("submit", async (ev)=>{
-      ev.preventDefault();
-      const f = fileEl.files?.[0];
-      if (!f) { alert("Seleziona una foto"); return; }
+  formEl.addEventListener("submit", async (ev)=>{
+    ev.preventDefault();
+    const f = fileEl.files[0];
+    if(!f){ alert("Seleziona una foto"); return; }
+    statusEl.textContent = "Caricamento…";
 
-      statusEl.textContent = "Caricamento…";
-
+    // --- UPLOAD via Worker (POST con FormData) ---
+    try{
       const fd = new FormData();
       fd.append("id", id);
       fd.append("photo", f, "photo.jpg");
 
-      const upRes = await fetchJson(BACKEND_URL, { method:"POST", body: fd });
-
-      if (!upRes.ok) {
-        statusEl.innerHTML = `<span class="err">Errore di connessione</span>`;
-        logDebug([
-          `Upload → ${BACKEND_URL}`,
-          `HTTP status: ${upRes.status}`,
-          `Body: ${upRes.body || "(vuoto)"}`,
-          upRes.err ? `JS Error: ${upRes.err}` : ""
-        ].filter(Boolean));
-        return;
+      const res = await fetch(PROXY_URL, { method:"POST", body: fd });
+      const txt = await res.text();
+      let json;
+      try { json = JSON.parse(txt); } catch {
+        return showError(`Upload fallito (HTTP ${res.status})`,
+          `Upload → ${PROXY_URL}\nBody: ${txt.slice(0,500)}`);
       }
 
-      if (upRes.json && upRes.json.ok && upRes.json.viewUrl) {
-        imgEl.src = upRes.json.viewUrl + `&ts=${Date.now()}`;
+      if(json.ok && json.viewUrl){
+        imgEl.src = json.viewUrl + `&ts=${Date.now()}`; // anti-cache
         statusEl.innerHTML = `<span class="ok">✅ Caricata</span>`;
-        viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
-        logDebug([`Upload ok. FileId: ${upRes.json.fileId || "n/d"}`, `viewUrl: ${upRes.json.viewUrl}`]);
-      } else {
-        statusEl.innerHTML = `<span class="err">❌ ${(upRes.json && upRes.json.error) || "Errore upload"}</span>`;
-        logDebug([
-          `Upload → ${BACKEND_URL}`,
-          `HTTP status: ${upRes.status}`,
-          `Body: ${upRes.body || "(vuoto)"}`
-        ]);
+        viewWrap.classList.remove("hidden");
+      }else{
+        showError(json.error || "Errore upload",
+          `Upload → ${PROXY_URL}\nHTTP status: ${res.status}\nBody: ${txt.slice(0,500)}`);
       }
-    });
-  })();
+    }catch(e){
+      showError("Errore di rete",
+        `Upload → ${PROXY_URL}\nJS Error: ${String(e)}`);
+    }
+  });
 </script>
 </body>
 </html>
