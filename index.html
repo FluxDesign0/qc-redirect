@@ -40,7 +40,7 @@
 
 <script>
   // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // Worker (CORS)
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -68,6 +68,7 @@
     debugEl.classList.remove("hidden");
     debugEl.textContent += lines.join("\n") + "\n";
   }
+  const rawUrl = (id) => `${PROXY_URL}?action=raw&id=${encodeURIComponent(id)}&ts=${Date.now()}`;
 
   (async function init(){
     if(!id){
@@ -76,6 +77,7 @@
     }
     idEl.textContent = id;
 
+    // Controlla se esiste già una foto
     const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
     dbg("META →", metaUrl);
 
@@ -89,8 +91,8 @@
         return;
       }
 
-      if(meta.ok && meta.exists && meta.viewUrl){
-        imgEl.src = meta.viewUrl;
+      if(meta.ok && meta.exists){
+        imgEl.src = rawUrl(id);  // usa endpoint RAW
         setStatus("Foto trovata", "ok");
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
@@ -151,14 +153,28 @@
       const txt = await res.text();
       let json; try { json = JSON.parse(txt); } catch { json = null; }
 
-      if(json && json.ok && json.viewUrl){
-        imgEl.src = json.viewUrl + `&ts=${Date.now()}`; // anti-cache
+      if(json && json.ok){
+        imgEl.src = rawUrl(id); // anteprima sicura
         setStatus("✅ Caricata", "ok");
         formEl.classList.add("hidden");
         viewWrap.classList.remove("hidden");
       }else{
         setStatus("❌ " + ((json && json.error) || "Errore upload"), "err");
         dbg("UPLOAD HTTP:", res.status, "BODY:", txt.slice(0,500));
+
+        // Recupero: verifica se è stata salvata comunque
+        try {
+          const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
+          const mr = await fetch(metaUrl, { cache:"no-store" });
+          const mtxt = await mr.text();
+          const m = (()=>{ try { return JSON.parse(mtxt); } catch { return null; } })();
+          if (m && m.ok && m.exists) {
+            imgEl.src = rawUrl(id);
+            setStatus("✅ Caricata (confermata)", "ok");
+            formEl.classList.add("hidden");
+            viewWrap.classList.remove("hidden");
+          }
+        } catch (_){}
       }
     }catch(e){
       setStatus("❌ Errore di rete", "err");
