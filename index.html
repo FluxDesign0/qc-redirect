@@ -2,114 +2,160 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8">
-  <title>Upload Foto con ID</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QC Photo</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    img { max-width: 300px; display: block; margin-top: 10px; }
-    #status { margin-top: 10px; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: #121212;
+      color: #f0f0f0;
+      font-family: Arial, sans-serif;
+    }
+    .card {
+      background-color: #1e1e1e;
+      border-radius: 8px;
+      padding: 20px;
+      width: 360px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+      text-align: center;
+    }
+    .card h2 {
+      margin: 0 0 15px;
+      font-size: 1.2em;
+      color: #ffffff;
+    }
+    .card img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.9em;
+    }
+    input[type="file"] {
+      width: 100%;
+      margin-bottom: 15px;
+    }
+    button {
+      background-color: #007bff;
+      color: #ffffff;
+      border: none;
+      padding: 10px 20px;
+      font-size: 1em;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
   </style>
 </head>
 <body>
-  <h1>Caricamento Foto</h1>
-  <div>ID: <span id="idDisplay"></span></div>
-  <div id="status">Caricamento stato...</div>
-  <div>
-    <img id="photoPreview" src="" alt="Nessuna foto caricata" style="display:none;">
+  <div class="card">
+    <h2 id="idDisplay">ID: QC-TEST-0001</h2>
+    <div id="content">
+      <!-- Contenuto dinamico: immagine o form di upload -->
+    </div>
   </div>
-  <div>
-    <input type="file" id="fileInput" accept="image/*" capture="environment">
-    <button id="uploadBtn" disabled>Carica Foto</button>
-  </div>
-
   <script>
-    (function() {
-      // URL del proxy Cloudflare (modificare con il vostro URL)
-      const PROXY_URL = "https://IL_TUO_WORKER.workers.dev";
-      // Estrae ID da ?id=... nella querystring
-      const params = new URLSearchParams(window.location.search);
-      const id = params.get('id');
-      const idDisplay = document.getElementById('idDisplay');
-      const statusDiv = document.getElementById('status');
-      const imgPreview = document.getElementById('photoPreview');
-      const fileInput = document.getElementById('fileInput');
-      const uploadBtn = document.getElementById('uploadBtn');
+    // URL del proxy Cloudflare
+    const proxyUrl = "https://qc-proxy.design-fluxitalia.workers.dev";
 
-      // Controlla la presenza di ID
-      if (!id) {
-        statusDiv.textContent = "Errore: parametro ID mancante nell'URL.";
-        return;
-      }
-      idDisplay.textContent = id;
+    // Ottieni l'ID dal parametro URL o usa un default
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id") || "QC-TEST-0001";
+    document.getElementById("idDisplay").textContent = "ID: " + id;
 
-      // Funzione per gestire risposta JSON/errore
-      async function handleResponse(response) {
-        if (!response.ok) {
-          let text = await response.text();
-          throw new Error(`HTTP ${response.status}: ${text}`);
-        }
-        return response.json();
-      }
+    // Funzione per caricare contenuto (immagine o form) in base allo stato
+    async function loadContent() {
+      const contentDiv = document.getElementById("content");
+      contentDiv.innerHTML = "<p>Caricamento...</p>";
 
-      // Richiede lo stato della foto (GET ?action=meta&id=...)
-      async function checkMeta() {
-        try {
-          const url = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
-          const response = await fetch(url, { method: 'GET' });
-          const data = await handleResponse(response);
-          // Assumiamo che data abbia { exists: boolean, url?: string }
-          if (data.exists) {
-            statusDiv.textContent = "Foto trovata. Visualizzo anteprima.";
-            if (data.url) {
-              imgPreview.src = data.url;
-              imgPreview.style.display = "block";
-            } else {
-              statusDiv.textContent += " (URL immagine mancante)";
-            }
-          } else {
-            statusDiv.textContent = "Nessuna foto esistente per questo ID. Carica una nuova foto.";
+      try {
+        const response = await fetch(proxyUrl + "/?action=meta&id=" + encodeURIComponent(id));
+        if (response.ok) {
+          const contentType = response.headers.get("Content-Type") || "";
+          // Se il proxy restituisce l'immagine direttamente
+          if (contentType.startsWith("image/")) {
+            const blob = await response.blob();
+            const imgUrl = URL.createObjectURL(blob);
+            contentDiv.innerHTML = `<img src="${imgUrl}" alt="QC Foto" />`;
+            return;
           }
-        } catch (err) {
-          statusDiv.textContent = "Errore GET: " + err.message;
+          // Altrimenti, prova a interpretare JSON
+          const data = await response.json();
+          // Supponiamo che la risposta JSON contenga un URL dell'immagine
+          const imageUrl = data.fileUrl || data.url || data.imageUrl || data.fotoUrl;
+          if (imageUrl) {
+            contentDiv.innerHTML = `<img src="${imageUrl}" alt="QC Foto" />`;
+          } else {
+            // Nessuna immagine: mostra form per caricare
+            showUploadForm();
+          }
+        } else {
+          // Errore HTTP: mostra form di upload
+          showUploadForm();
         }
+      } catch (error) {
+        console.error("Errore nel recupero dei dati:", error);
+        // In caso di errore di rete, mostra comunque il form
+        showUploadForm();
       }
+    }
 
-      // Preview dell'immagine selezionata
-      fileInput.addEventListener('change', function() {
-        const file = fileInput.files[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = e => {
-            imgPreview.src = e.target.result;
-            imgPreview.style.display = "block";
-          };
-          reader.readAsDataURL(file);
-          uploadBtn.disabled = false;
-        }
-      });
-
-      // Upload della foto selezionata (POST form-data)
-      uploadBtn.addEventListener('click', async function() {
+    // Funzione per mostrare il form di upload
+    function showUploadForm() {
+      const contentDiv = document.getElementById("content");
+      contentDiv.innerHTML = `
+        <form id="uploadForm">
+          <label for="photoInput">Seleziona l'immagine da caricare:</label>
+          <input type="file" id="photoInput" name="photo" accept="image/*" required />
+          <button type="submit">Carica</button>
+        </form>
+      `;
+      const uploadForm = document.getElementById("uploadForm");
+      uploadForm.addEventListener("submit", async function(event) {
+        event.preventDefault();
+        const fileInput = document.getElementById("photoInput");
         const file = fileInput.files[0];
         if (!file) {
-          alert("Seleziona un file prima di caricare.");
+          alert("Seleziona un file immagine prima di caricare.");
           return;
         }
-        statusDiv.textContent = "Caricamento in corso...";
+        // Mostra messaggio di caricamento
+        contentDiv.innerHTML = "<p>Caricamento immagine in corso...</p>";
+        // Prepara FormData per inviare il file
+        const formData = new FormData();
+        formData.append("id", id);
+        formData.append("photo", file);
         try {
-          const formData = new FormData();
-          formData.append('id', id);
-          formData.append('photo', file, file.name);
-          const response = await fetch(PROXY_URL, { method: 'POST', body: formData });
-          const data = await handleResponse(response);
-          statusDiv.textContent = "Upload completato: " + JSON.stringify(data);
-        } catch (err) {
-          statusDiv.textContent = "Errore POST: " + err.message;
+          const uploadResponse = await fetch(proxyUrl, {
+            method: "POST",
+            body: formData
+          });
+          if (!uploadResponse.ok) {
+            throw new Error("Errore nel caricamento: " + uploadResponse.statusText);
+          }
+          const result = await uploadResponse.json();
+          console.log("Risposta upload:", result);
+          // Dopo l'upload, ricarica il contenuto (dovrebbe mostrare l'immagine)
+          loadContent();
+        } catch (uploadError) {
+          console.error("Errore durante l'upload:", uploadError);
+          contentDiv.innerHTML = "<p>Errore nel caricamento. Riprova.</p>";
         }
       });
+    }
 
-      // Avvia controllo all'avvio
-      checkMeta();
-    })();
+    // Al caricamento della pagina, carica il contenuto
+    window.addEventListener("load", loadContent);
   </script>
 </body>
 </html>
