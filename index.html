@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -22,17 +22,17 @@
 <body>
   <div class="card">
     <h1>QC Photo</h1>
-    <div id="status" class="muted">Inizializzo…</div>
+    <div id="status" class="muted">Initializing…</div>
 
     <div id="viewWrap" class="hidden">
-      <p class="muted">Foto per <code id="cid"></code>:</p>
-      <img id="photo" alt="QC photo">
-      <p><button id="changeBtn" type="button">Carica/aggiorna foto</button></p>
+      <p class="muted">Photo for <code id="cid"></code>:</p>
+      <img id="photo" alt="QC photo preview">
+      <p><button id="changeBtn" type="button">Upload/Update photo</button></p>
     </div>
 
     <form id="form" class="hidden">
       <input type="file" id="file" accept="image/*" capture="environment" />
-      <p><button id="uploadBtn" type="submit">Carica</button></p>
+      <p><button id="uploadBtn" type="submit">Upload</button></p>
     </form>
 
     <pre id="debug" class="muted hidden"></pre>
@@ -40,7 +40,7 @@
 
 <script>
   // ====== CONFIG ======
-  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // tuo Worker
+  const PROXY_URL = "https://qc-proxy.design-fluxitalia.workers.dev/"; // your Worker
   // ====================
 
   const qs = new URLSearchParams(location.search);
@@ -82,7 +82,7 @@
 
   (async function init(){
     if(!id){
-      setStatus("❌ ID mancante (usa ?id=QC-0001)", "err");
+      setStatus("❌ Missing ID (use ?id=QC-0001)", "err");
       return;
     }
     idEl.textContent = id;
@@ -95,7 +95,7 @@
       const text = await r.text();
       let meta;
       try { meta = JSON.parse(text); } catch {
-        setStatus("Errore di connessione", "err");
+        setStatus("Connection error", "err");
         dbg("HTTP:", r.status, "BODY:", text.slice(0,500));
         return;
       }
@@ -103,16 +103,16 @@
       if(meta.ok && meta.exists){
         const du = await loadDataUrl(id);
         if (du) imgEl.src = du;
-        setStatus("Foto trovata", "ok");
+        setStatus("Photo found", "ok");
         viewWrap.classList.remove("hidden");
         formEl.classList.add("hidden");
       }else{
-        setStatus("Nessuna foto: scatta o carica");
+        setStatus("No photo: take or upload one");
         viewWrap.classList.add("hidden");
         formEl.classList.remove("hidden");
       }
     }catch(e){
-      setStatus("Errore di rete", "err");
+      setStatus("Network error", "err");
       dbg("EX META:", String(e));
     }
   })();
@@ -120,20 +120,20 @@
   changeBtn?.addEventListener("click", ()=>{
     viewWrap.classList.add("hidden");
     formEl.classList.remove("hidden");
-    setStatus("Seleziona/scatta una foto");
+    setStatus("Select or capture a photo");
   });
 
-  // ========= UPLOAD ROBUSTO: JSON Base64 =========
+  // ========= ROBUST UPLOAD: JSON Base64 =========
   formEl.addEventListener("submit", async (ev)=>{
     ev.preventDefault();
     const f = fileEl.files && fileEl.files[0];
-    if(!f){ alert("Seleziona o scatta una foto"); return; }
+    if(!f){ alert("Select or capture a photo"); return; }
 
-    setStatus("Caricamento…");
+    setStatus("Uploading…");
     uploadBtn.disabled = true;
 
     try{
-      // Leggi file come DataURL e prendi solo la parte Base64
+      // Read file as DataURL and keep only the Base64 part
       const b64 = await new Promise((resolve, reject)=>{
         const reader = new FileReader();
         reader.onload = () => {
@@ -166,14 +166,14 @@
       if(json && json.ok){
         const du = await loadDataUrl(id);
         if (du) imgEl.src = du;
-        setStatus("✅ Caricata", "ok");
+        setStatus("✅ Uploaded", "ok");
         formEl.classList.add("hidden");
         viewWrap.classList.remove("hidden");
       }else{
-        setStatus("❌ " + ((json && json.error) || "Errore upload"), "err");
+        setStatus("❌ Upload failed", "err");
         dbg("UPLOAD HTTP:", res.status, "BODY:", txt.slice(0,500));
 
-        // Recupero: verifica se è stata salvata comunque
+        // Recovery: check whether the file was actually saved
         try {
           const metaUrl = `${PROXY_URL}?action=meta&id=${encodeURIComponent(id)}`;
           const mr = await fetch(metaUrl, { cache:"no-store" });
@@ -182,14 +182,14 @@
           if (m && m.ok && m.exists) {
             const du = await loadDataUrl(id);
             if (du) imgEl.src = du;
-            setStatus("✅ Caricata (confermata)", "ok");
+            setStatus("✅ Uploaded (confirmed)", "ok");
             formEl.classList.add("hidden");
             viewWrap.classList.remove("hidden");
           }
         } catch (_){}
       }
     }catch(e){
-      setStatus("❌ Errore di rete", "err");
+      setStatus("❌ Network error", "err");
       dbg("EX UPLOAD:", String(e));
     }finally{
       uploadBtn.disabled = false;
