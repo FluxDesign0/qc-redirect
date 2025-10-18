@@ -12,11 +12,17 @@
     .muted{color:#9aa4af;font-size:13px;white-space:pre-wrap;word-break:break-word}
     img{max-width:100%;height:auto;border:1px solid #1f2937;border-radius:8px;display:block;background:#000}
     button{padding:10px 14px;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
-    input[type=file]{display:block;margin:12px 0}
     .hidden{display:none}
     .ok{color:#16a34a}
     .err{color:#ef4444}
     code{background:#0b1220;padding:2px 6px;border-radius:6px}
+
+    /* Custom file input */
+    .file-input{position:relative}
+    .file-input input[type=file]{position:absolute;inset:0;opacity:0;pointer-events:none}
+    .file-row{display:flex;gap:10px;align-items:center;margin:12px 0}
+    .btn-file{padding:8px 12px;border-radius:8px;background:#374151;color:#fff;border:1px solid #4b5563;cursor:pointer}
+    .file-name{font-size:13px;color:#9aa4af}
   </style>
 </head>
 <body>
@@ -30,8 +36,15 @@
       <p><button id="changeBtn" type="button">Upload/Update photo</button></p>
     </div>
 
-    <form id="form" class="hidden">
-      <input type="file" id="file" accept="image/*" capture="environment" />
+    <form id="form" class="hidden" aria-label="Upload photo form">
+      <!-- Hidden native input + custom button/label (always in English) -->
+      <div class="file-input">
+        <input id="file" type="file" accept="image/*" capture="environment" />
+        <div class="file-row">
+          <label for="file" class="btn-file" role="button" aria-controls="file">Choose file</label>
+          <span id="fileName" class="file-name" aria-live="polite">No file selected</span>
+        </div>
+      </div>
       <p><button id="uploadBtn" type="submit">Upload</button></p>
     </form>
 
@@ -53,6 +66,7 @@
   const idEl     = $("#cid");
   const formEl   = $("#form");
   const fileEl   = $("#file");
+  const fileNameEl = $("#fileName");
   const uploadBtn= $("#uploadBtn");
   const changeBtn= $("#changeBtn");
   const debugEl  = $("#debug");
@@ -68,6 +82,12 @@
     debugEl.classList.remove("hidden");
     debugEl.textContent += lines.join("\n") + "\n";
   }
+
+  // Update custom filename label
+  fileEl?.addEventListener("change", ()=>{
+    const f = fileEl.files && fileEl.files[0];
+    fileNameEl.textContent = f ? f.name : "No file selected";
+  });
 
   async function loadDataUrl(id){
     const u = `${PROXY_URL}?action=dataurl&id=${encodeURIComponent(id)}&ts=${Date.now()}`;
